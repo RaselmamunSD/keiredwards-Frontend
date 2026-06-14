@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import Swal from "sweetalert2";
+import { api } from "@/lib/api";
 
 const DAY_OPTIONS = [
   "Randomize", "Monday", "Tuesday", "Wednesday",
@@ -29,9 +31,9 @@ function Toast({ message, type = "success" }: { message: string; type?: "success
   );
 }
 
-export default function CheckInSchedule() {
-  const purchasedPlan = "Weekly";
-  const renewalDate = "03/23/2026";
+export default function CheckInSchedule({ onRefresh }: { onRefresh?: () => void }) {
+  const [purchasedPlan, setPurchasedPlan] = useState("Weekly");
+  const [renewalDate, setRenewalDate] = useState("03/23/2026");
 
   const [config, setConfig] = useState<ScheduleConfig>({
     dayOfWeek: "Randomize",
@@ -49,6 +51,27 @@ export default function CheckInSchedule() {
   const [isDirty, setIsDirty] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await api.getCheckInSchedule();
+        const data = res.data;
+        const mapped = {
+          dayOfWeek: data.day_of_week,
+          gracePeriod: data.grace_period,
+        };
+        setConfig(mapped);
+        setSavedConfig(mapped);
+        setPaused(data.paused);
+        setPurchasedPlan(data.purchased_plan);
+        setRenewalDate(data.renewal_date);
+      } catch (err) {
+        console.error("Failed to load check-in schedule config", err);
+      }
+    };
+    void load();
+  }, []);
+
   const showToast = (msg: string, type: "success" | "warning" = "success") => {
     setToast(msg);
     setToastType(type);
@@ -60,19 +83,67 @@ export default function CheckInSchedule() {
     setIsDirty(true);
   };
 
-  const handleSave = () => {
-    setSavedConfig({ ...config });
-    setIsDirty(false);
-    showToast("Schedule configuration saved successfully.");
+  const handleSave = async () => {
+    try {
+      const res = await api.saveCheckInSchedule({
+        day_of_week: config.dayOfWeek,
+        grace_period: config.gracePeriod,
+      });
+      const mapped = {
+        dayOfWeek: res.data.day_of_week,
+        gracePeriod: res.data.grace_period,
+      };
+      setConfig(mapped);
+      setSavedConfig(mapped);
+      setIsDirty(false);
+      showToast("Schedule configuration saved successfully.");
+      if (onRefresh) onRefresh();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to save schedule configuration.", "warning");
+    }
   };
 
-  const handlePauseToggle = () => {
-    setPaused(p => !p);
-    showToast(
-      paused ? "Service resumed. Check-in requirements are active." : "Service paused. Remember to resume when ready.",
-      paused ? "success" : "warning"
-    );
+  const handlePauseToggle = async () => {
+    const nextPaused = !paused;
+    try {
+      const res = await api.saveCheckInSchedule({
+        paused: nextPaused,
+      });
+      setPaused(res.data.paused);
+      showToast(
+        res.data.paused ? "Service paused. Remember to resume when ready." : "Service resumed. Check-in requirements are active.",
+        res.data.paused ? "warning" : "success"
+      );
+      if (onRefresh) onRefresh();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to toggle pause status.", "warning");
+    }
   };
+
+  const handleRenewPlan = async () => {
+    try {
+      await api.updateSetupAccounting({
+        renew_services: ["I Was Killed For This Information"],
+      });
+      const res = await api.getCheckInSchedule();
+      const data = res.data;
+      const mapped = {
+        dayOfWeek: data.day_of_week,
+        gracePeriod: data.grace_period,
+      };
+      setConfig(mapped);
+      setSavedConfig(mapped);
+      setPaused(data.paused);
+      setPurchasedPlan(data.purchased_plan);
+      setRenewalDate(data.renewal_date);
+      showToast("Check-In plan renewed successfully!");
+      if (onRefresh) onRefresh();
+    } catch (err) {
+      console.error("Failed to renew plan", err);
+      showToast("Failed to renew plan. Please try again.", "warning");
+    }
+  };
+
 
   const handleUpgradeRenewal = () => {
     setShowUpgradeModal(true);
@@ -133,9 +204,10 @@ export default function CheckInSchedule() {
                 {
                   icon: "🔄",
                   title: "Renew Current Plan",
-                  desc: "Extend your Weekly Check-In for another term.",
+                  desc: `Extend your ${purchasedPlan} Check-In for another term.`,
                   btnLabel: "RENEW NOW",
                   btnClass: "bg-green-500 hover:bg-green-400",
+                  action: handleRenewPlan,
                 },
                 {
                   icon: "⚡",
@@ -143,6 +215,14 @@ export default function CheckInSchedule() {
                   desc: "Switch to Daily, Monthly, or another frequency.",
                   btnLabel: "VIEW UPGRADES",
                   btnClass: "bg-blue-600 hover:bg-blue-500",
+                  action: () => {
+                    Swal.fire({
+                      title: "Upgrade Plan",
+                      text: "Please visit the 'Setup & Accounting' tab on your dashboard under 'New Orders' to purchase or change your plan.",
+                      icon: "info",
+                      confirmButtonColor: "#3b82f6"
+                    });
+                  }
                 },
                 {
                   icon: "💬",
@@ -150,8 +230,16 @@ export default function CheckInSchedule() {
                   desc: "Need a custom plan or have questions? We're here.",
                   btnLabel: "CONTACT US",
                   btnClass: "bg-gray-700 hover:bg-gray-600",
+                  action: () => {
+                    Swal.fire({
+                      title: "Contact Support",
+                      text: "Support email: support@keiredwards.com",
+                      icon: "info",
+                      confirmButtonColor: "#374151"
+                    });
+                  }
                 },
-              ].map(({ icon, title, desc, btnLabel, btnClass }) => (
+              ].map(({ icon, title, desc, btnLabel, btnClass, action }) => (
                 <div
                   key={title}
                   className="flex items-center justify-between gap-4 border border-gray-200 rounded-xl px-4 py-3"
@@ -166,7 +254,7 @@ export default function CheckInSchedule() {
                   <button
                     onClick={() => {
                       setShowUpgradeModal(false);
-                      showToast(`${title} — coming soon! Please contact support.`, "success");
+                      action();
                     }}
                     className={`${btnClass} text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors shrink-0 cursor-pointer`}
                   >

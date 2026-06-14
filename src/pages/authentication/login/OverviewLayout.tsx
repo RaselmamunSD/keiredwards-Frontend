@@ -9,9 +9,10 @@
 // UPDATED: Two-Factor Authentication set to Active per client feedback.
 // UPDATED: Storage split into Standard Storage + Additional Storage rows per client feedback.
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
+import { api } from "@/lib/api";
 
 // ── Mock data — replace with real API data in production ──────────────────────
 const MOCK_DATA = {
@@ -170,16 +171,189 @@ function CardRow({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
 export default function OverviewLayout() {
   const router = useRouter();
-  const { logout } = useAuth();
+  const { isLoggedIn, isLoading: authLoading, logout } = useAuth();
   const [helpOpen, setHelpOpen] = useState(false);
+  const [data, setData] = useState<{
+    lastLogin: string;
+    accountStatus: string;
+    checkIn: {
+      status: string;
+      nextCheckInDate: string;
+      minutesRemaining: number;
+      frequency: string;
+      gracePeriod: string;
+      email: string;
+    };
+    subscription: {
+      plan: string;
+      started: string;
+      renews: string;
+      term: string;
+      storage: string;
+      storageUsedGB: number;
+      storageTotalGB: number;
+      distributionTo: string;
+    };
+    services: Array<{
+      name: string;
+      details: string;
+      activeUntil: string;
+      status: string;
+      active: boolean;
+    }>;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!authLoading && !isLoggedIn) {
+      router.push("/login");
+    }
+  }, [authLoading, isLoggedIn, router]);
+
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    const load = async () => {
+      try {
+        const [accountingRes, scheduleRes, emailRes, vaultRes, profileRes] = await Promise.all([
+          api.getSetupAccounting(),
+          api.getCheckInSchedule(),
+          api.getCheckInEmailConfig(),
+          api.getVaultFiles(),
+          api.profile(),
+        ]);
+
+        const history = accountingRes.data.history;
+        const lastLoginStr = history && history.length > 0
+          ? `${history[0].date} ${history[0].time}`
+          : "No check-ins yet";
+
+        const paused = scheduleRes.data.paused;
+        const checkInEmail = emailRes.data.checkin_email || accountingRes.data.config.two_fa_email || "user@example.com";
+
+        const storageTotalGB = vaultRes.data.storage_config.total_storage_gb || 5;
+        const totalSizeMB = vaultRes.data.files.reduce((sum: number, f: any) => sum + parseFloat(f.file_size_mb || "0"), 0);
+        const storageUsedGB = parseFloat((totalSizeMB / 1024).toFixed(3));
+
+        const pressSvc = accountingRes.data.services.find((s: any) => s.name === "Press Release");
+        const distributionTo = (pressSvc && pressSvc.is_purchased)
+          ? `Press Release (${pressSvc.additional_info || "250 count"})`
+          : "Trusted Recipients";
+
+        const renewalDateStr = scheduleRes.data.renewal_date || "March 7, 2027";
+        const parsedTime = Date.parse(renewalDateStr);
+        let minutesRemaining = 999999;
+        if (!isNaN(parsedTime)) {
+          const diffMs = parsedTime - Date.now();
+          minutesRemaining = diffMs > 0 ? Math.floor(diffMs / 60000) : 0;
+        }
+
+        const mainService = accountingRes.data.services.find((s: any) => s.name === "I Was Killed For This Information");
+        const standardStorageActiveUntil = mainService ? mainService.active_until : "March 7, 2027";
+
+        const mappedServices: any[] = [
+          {
+            name: "Standard Storage",
+            details: "5 GB Included",
+            activeUntil: standardStorageActiveUntil,
+            status: "Active",
+            active: true
+          }
+        ];
+
+        accountingRes.data.services.forEach((s: any) => {
+          if (s.name === "Additional Storage") {
+            mappedServices.push({
+              name: s.name,
+              details: s.additional_info,
+              activeUntil: s.active_until,
+              status: s.is_purchased ? "Active" : "Not Purchased",
+              active: s.is_purchased
+            });
+          } else if (s.name !== "I Was Killed For This Information") {
+            mappedServices.push({
+              name: s.name,
+              details: s.additional_info,
+              activeUntil: s.active_until,
+              status: s.is_purchased ? "Active" : "Not Purchased",
+              active: s.is_purchased
+            });
+          } else {
+            mappedServices.push({
+              name: s.name,
+              details: s.additional_info,
+              activeUntil: s.active_until,
+              status: s.is_purchased ? "Active" : "Not Purchased",
+              active: s.is_purchased
+            });
+          }
+        });
+
+        let startedDate = "03/07/2025";
+        if (profileRes.data.date_joined) {
+          try {
+            const dateObj = new Date(profileRes.data.date_joined);
+            if (!isNaN(dateObj.getTime())) {
+              const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
+              const dd = String(dateObj.getDate()).padStart(2, '0');
+              const yyyy = dateObj.getFullYear();
+              startedDate = `${mm}/${dd}/${yyyy}`;
+            }
+          } catch (e) {
+            console.error("Error parsing date_joined", e);
+          }
+        }
+
+        setData({
+          lastLogin: lastLoginStr,
+          accountStatus: paused ? "Paused" : "Active",
+          checkIn: {
+            status: paused ? "Paused" : "Active",
+            nextCheckInDate: renewalDateStr,
+            minutesRemaining,
+            frequency: scheduleRes.data.purchased_plan,
+            gracePeriod: scheduleRes.data.grace_period,
+            email: checkInEmail,
+          },
+          subscription: {
+            plan: `${scheduleRes.data.purchased_plan} Check-In`,
+            started: startedDate,
+            renews: renewalDateStr,
+            term: "1 Year",
+            storage: `${storageTotalGB} GB`,
+            storageUsedGB,
+            storageTotalGB,
+            distributionTo,
+          },
+          services: mappedServices,
+        });
+      } catch (err) {
+        console.error("Failed to load overview data", err);
+      }
+    };
+    void load();
+  }, [isLoggedIn]);
 
   const handleLogout = async () => {
     await logout();
     router.push("/");
   };
+
+  if (authLoading || !isLoggedIn) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <p className="text-sm text-gray-500">Redirecting to login...</p>
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <p className="text-sm text-gray-500">Loading dashboard overview...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-white py-8 sm:py-10">
@@ -199,11 +373,11 @@ export default function OverviewLayout() {
             </h1>
             <p className="mt-2 text-sm text-gray-500 font-mono">
               Last login:{" "}
-              <span className="font-bold text-gray-800">{MOCK_DATA.lastLogin}</span>
+              <span className="font-bold text-gray-800">{data.lastLogin}</span>
               {"  ·  "}
               Account status:{" "}
-              <span className="font-bold text-green-600">
-                ● {MOCK_DATA.accountStatus}
+              <span className={`font-bold ${data.accountStatus === "Active" ? "text-green-600" : "text-yellow-600"}`}>
+                ● {data.accountStatus}
               </span>
             </p>
           </div>
@@ -243,22 +417,22 @@ export default function OverviewLayout() {
 
           {/* Check-In Status */}
           <div className="border border-gray-200 rounded-xl overflow-hidden">
-            <div className="bg-green-50 px-5 py-3 border-b border-gray-200">
-              <h2 className="text-xs font-bold text-green-700 uppercase tracking-widest">
+            <div className={`px-5 py-3 border-b border-gray-200 ${data.checkIn.status === "Active" ? "bg-green-50" : "bg-yellow-50"}`}>
+              <h2 className={`text-xs font-bold uppercase tracking-widest ${data.checkIn.status === "Active" ? "text-green-700" : "text-yellow-700"}`}>
                 Check-In Status
               </h2>
             </div>
             <div>
-              <CardRow label="Status" value={<span className="font-bold text-gray-900">● Active</span>} />
-              <CardRow label="Next Check-In Date" value={<span className="font-bold text-gray-900">{MOCK_DATA.checkIn.nextCheckInDate}</span>} />
-              <CardRow label="Minutes Remaining" value={<span className="font-bold text-gray-900">{MOCK_DATA.checkIn.minutesRemaining.toLocaleString()}</span>} />
-              <CardRow label="Frequency" value={<span className="font-bold text-gray-900">{MOCK_DATA.checkIn.frequency}</span>} />
-              <CardRow label="Grace Period" value={<span className="font-bold text-gray-900">{MOCK_DATA.checkIn.gracePeriod}</span>} />
+              <CardRow label="Status" value={<span className="font-bold text-gray-900">● {data.checkIn.status}</span>} />
+              <CardRow label="Next Check-In Date" value={<span className="font-bold text-gray-900">{data.checkIn.nextCheckInDate}</span>} />
+              <CardRow label="Minutes Remaining" value={<span className="font-bold text-gray-900">{data.checkIn.minutesRemaining.toLocaleString()}</span>} />
+              <CardRow label="Frequency" value={<span className="font-bold text-gray-900">{data.checkIn.frequency}</span>} />
+              <CardRow label="Grace Period" value={<span className="font-bold text-gray-900">{data.checkIn.gracePeriod}</span>} />
               <CardRow
                 label="Check-In Email"
                 value={
                   <span className="font-bold text-gray-900 break-all">
-                    {MOCK_DATA.checkIn.email}
+                    {data.checkIn.email}
                   </span>
                 }
               />
@@ -273,16 +447,16 @@ export default function OverviewLayout() {
               </h2>
             </div>
             <div>
-              <CardRow label="Plan" value={<span className="font-bold text-gray-900">{MOCK_DATA.subscription.plan}</span>} />
-              <CardRow label="Started" value={<span className="font-bold text-gray-900">{MOCK_DATA.subscription.started}</span>} />
-              <CardRow label="Renews" value={<span className="font-bold text-gray-900">{MOCK_DATA.subscription.renews}</span>} />
-              <CardRow label="Term" value={<span className="font-bold text-gray-900">{MOCK_DATA.subscription.term}</span>} />
-              <CardRow label="Storage" value={<span className="font-bold text-gray-900">{MOCK_DATA.subscription.storage}</span>} />
+              <CardRow label="Plan" value={<span className="font-bold text-gray-900">{data.subscription.plan}</span>} />
+              <CardRow label="Started" value={<span className="font-bold text-gray-900">{data.subscription.started}</span>} />
+              <CardRow label="Renews" value={<span className="font-bold text-gray-900">{data.subscription.renews}</span>} />
+              <CardRow label="Term" value={<span className="font-bold text-gray-900">{data.subscription.term}</span>} />
+              <CardRow label="Storage" value={<span className="font-bold text-gray-900">{data.subscription.storage}</span>} />
               <CardRow
                 label="Storage Used"
-                value={<StorageBar used={MOCK_DATA.subscription.storageUsedGB} total={MOCK_DATA.subscription.storageTotalGB} />}
+                value={<StorageBar used={data.subscription.storageUsedGB} total={data.subscription.storageTotalGB} />}
               />
-              <CardRow label="Distribution To" value={<span className="font-bold text-gray-900">{MOCK_DATA.subscription.distributionTo}</span>} />
+              <CardRow label="Distribution To" value={<span className="font-bold text-gray-900">{data.subscription.distributionTo}</span>} />
             </div>
           </div>
         </div>
@@ -300,10 +474,10 @@ export default function OverviewLayout() {
               </tr>
             </thead>
             <tbody>
-              {MOCK_DATA.services.map((svc, idx) => (
+              {data.services.map((svc, idx) => (
                 <tr
                   key={svc.name}
-                  className={`hover:bg-gray-50 transition-colors ${idx < MOCK_DATA.services.length - 1 ? "border-b border-gray-100" : ""}`}
+                  className={`hover:bg-gray-50 transition-colors ${idx < data.services.length - 1 ? "border-b border-gray-100" : ""}`}
                 >
                   <td className="px-5 py-3.5 font-semibold text-gray-900">
                     <span className={`inline-block w-2.5 h-2.5 rounded-full mr-2.5 ${svc.active ? "bg-green-500" : "bg-red-500"}`} />
@@ -323,7 +497,7 @@ export default function OverviewLayout() {
 
           {/* Mobile cards */}
           <div className="sm:hidden divide-y divide-gray-100">
-            {MOCK_DATA.services.map((svc) => (
+            {data.services.map((svc) => (
               <div key={svc.name} className="px-4 py-4 space-y-1.5">
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-gray-900 text-sm flex items-center gap-2">

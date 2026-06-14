@@ -91,9 +91,10 @@ async function rawRequest<T>(
   body?: unknown,
   token?: string
 ): Promise<ApiEnvelope<T>> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
+  const headers: Record<string, string> = {};
+  if (!(body instanceof FormData)) {
+    headers["Content-Type"] = "application/json";
+  }
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
@@ -101,7 +102,7 @@ async function rawRequest<T>(
   const response = await fetch(`${API_URL}/api/v1/${endpoint}`, {
     method,
     headers,
-    body: body ? JSON.stringify(body) : undefined,
+    body: body instanceof FormData ? body : (body ? JSON.stringify(body) : undefined),
   });
 
   let payload: ApiEnvelope<T> & ApiErrorBody;
@@ -182,6 +183,7 @@ export const api = {
       first_name: string;
       last_name: string;
       phone: string;
+      date_joined?: string;
     }>("auth/profile/", "GET"),
   paymentsCreate: (payload: { amount: number; currency: string; metadata?: Record<string, unknown> }) =>
     authorizedRequest<{ checkout_url: string; payment: { gateway_reference: string } }>(
@@ -195,6 +197,24 @@ export const api = {
       "POST",
       { reference }
     ),
+  getPricingConfig: () =>
+    rawRequest<{
+      check_in_options: Array<{
+        key: string;
+        label: string;
+        display_label: string;
+        price_per_month: number;
+        price_1_year: number;
+        price_2_years: number;
+        price_3_years: number;
+      }>;
+      add_ons: Array<{
+        key: string;
+        label: string;
+        description: string;
+        price: number;
+      }>;
+    }>("payments/pricing/", "GET"),
   dashboardSummary: () =>
     authorizedRequest<{
       total_payments: number;
@@ -208,4 +228,184 @@ export const api = {
       status_breakdown: Record<string, number>;
       daily_completed_amount: Array<{ day: string; amount: number }>;
     }>(`dashboard/analytics/?days=${days}`, "GET"),
+  getCheckInEmailConfig: () =>
+    authorizedRequest<{
+      id: number;
+      checkin_email: string;
+      checkin_password: string;
+      checkin_password_enabled: boolean;
+      private_email_username: string;
+      private_email_address_saved: boolean;
+      private_email_password: string;
+      private_email_password_saved: boolean;
+      updated_at: string;
+      created_at: string;
+    }>("dashboard/checkin-email/", "GET"),
+  saveCheckInEmailConfig: (payload: Partial<{
+    checkin_email: string;
+    checkin_password: string;
+    checkin_password_enabled: boolean;
+    private_email_username: string;
+    private_email_address_saved: boolean;
+    private_email_password: string;
+    private_email_password_saved: boolean;
+  }>) =>
+    authorizedRequest<{
+      id: number;
+      checkin_email: string;
+      checkin_password: string;
+      checkin_password_enabled: boolean;
+      private_email_username: string;
+      private_email_address_saved: boolean;
+      private_email_password: string;
+      private_email_password_saved: boolean;
+    }>("dashboard/checkin-email/", "POST", payload),
+  getCheckInSchedule: () =>
+    authorizedRequest<{
+      id: number;
+      day_of_week: string;
+      grace_period: string;
+      paused: boolean;
+      purchased_plan: string;
+      renewal_date: string;
+    }>("dashboard/checkin-schedule/", "GET"),
+  saveCheckInSchedule: (payload: Partial<{
+    day_of_week: string;
+    grace_period: string;
+    paused: boolean;
+    purchased_plan: string;
+    renewal_date: string;
+  }>) =>
+    authorizedRequest<{
+      id: number;
+      day_of_week: string;
+      grace_period: string;
+      paused: boolean;
+      purchased_plan: string;
+      renewal_date: string;
+    }>("dashboard/checkin-schedule/", "POST", payload),
+  getTrustedRecipients: () =>
+    authorizedRequest<Array<{
+      id: number;
+      first_name: string;
+      email: string;
+      is_owner: boolean;
+    }>>("dashboard/trusted-recipients/", "GET"),
+  addTrustedRecipient: (payload: { first_name: string; email: string }) =>
+    authorizedRequest<{
+      id: number;
+      first_name: string;
+      email: string;
+      is_owner: boolean;
+    }>("dashboard/trusted-recipients/", "POST", payload),
+  deleteTrustedRecipient: (id: number) =>
+    authorizedRequest<{}>("dashboard/trusted-recipients/", "DELETE", { id }),
+  getEmailTemplate: () =>
+    authorizedRequest<{
+      id: number;
+      template: string;
+    }>("dashboard/email-template/", "GET"),
+  saveEmailTemplate: (payload: { template: string }) =>
+    authorizedRequest<{
+      id: number;
+      template: string;
+    }>("dashboard/email-template/", "POST", payload),
+  getPressRelease: () =>
+    authorizedRequest<{
+      id: number;
+      is_active: boolean;
+      template: string;
+      current_tier: number;
+    }>("dashboard/press-release/", "GET"),
+  savePressRelease: (payload: Partial<{
+    is_active: boolean;
+    template: string;
+    current_tier: number;
+  }>) =>
+    authorizedRequest<{
+      id: number;
+      is_active: boolean;
+      template: string;
+      current_tier: number;
+    }>("dashboard/press-release/", "POST", payload),
+  getVaultFiles: () =>
+    authorizedRequest<{
+      storage_config: { total_storage_gb: number };
+      files: Array<{ id: number; file_name: string; file_size_mb: string }>;
+    }>("dashboard/vault-files/", "GET"),
+  saveVaultFiles: (payload: {
+    total_storage_gb?: number;
+    files?: Array<{ name: string; sizeMB: string }>;
+  } | FormData) =>
+    authorizedRequest<{
+      storage_config: { total_storage_gb: number };
+      files: Array<{ id: number; file_name: string; file_size_mb: string }>;
+    }>("dashboard/vault-files/", "POST", payload),
+  downloadVaultFile: async (id: number, fileName: string) => {
+    const access = tokenStorage.getAccess();
+    const response = await fetch(`${API_URL}/api/v1/dashboard/vault-files/${id}/download/`, {
+      headers: {
+        Authorization: `Bearer ${access}`,
+      },
+    });
+    if (!response.ok) {
+      throw new Error("Failed to download file");
+    }
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  },
+  getSetupAccounting: () =>
+    authorizedRequest<{
+      config: { id: number; two_fa_enabled: boolean; two_fa_email: string; has_two_fa: boolean };
+      services: Array<{ id: number; name: string; additional_info: string; active_until: string; is_purchased: boolean }>;
+      billing: Array<{ id: number; date: string; description: string; amount: string; is_included: boolean }>;
+      history: Array<{ id: number; date: string; time: string; ip: string; login_name: string; device_os: string }>;
+    }>("dashboard/setup-accounting/", "GET"),
+  updateSetupAccounting: (payload: {
+    two_fa_enabled?: boolean;
+    two_fa_email?: string;
+    purchase_service?: string;
+    renew_services?: string[];
+  }) =>
+    authorizedRequest<{
+      config: { id: number; two_fa_enabled: boolean; two_fa_email: string; has_two_fa: boolean };
+      services: Array<{ id: number; name: string; additional_info: string; active_until: string; is_purchased: boolean }>;
+      billing: Array<{ id: number; date: string; description: string; amount: string; is_included: boolean }>;
+      history: Array<{ id: number; date: string; time: string; ip: string; login_name: string; device_os: string }>;
+    }>("dashboard/setup-accounting/", "POST", payload),
+  passwordChange: (payload: { old_password: string; new_password: string; new_password_confirm: string }) =>
+    authorizedRequest<{}>("auth/password/change/", "POST", payload),
+  submitContactMessage: (payload: {
+    fullName: string;
+    email: string;
+    subject: string;
+    isCustomer: "Yes" | "No";
+    message: string;
+  }) =>
+    rawRequest<{}>("dashboard/contact/", "POST", {
+      full_name: payload.fullName,
+      email: payload.email,
+      subject: payload.subject,
+      is_customer: payload.isCustomer,
+      message: payload.message,
+    }),
+  profileUpdate: (payload: Partial<{ username: string; first_name: string; last_name: string; phone: string; bio: string }>) => {
+    // Send as FormData because ProfileUpdateView uses MultiPartParser/FormParser
+    const formData = new FormData();
+    for (const [key, val] of Object.entries(payload)) {
+      if (val !== undefined && val !== null) {
+        formData.append(key, val as string);
+      }
+    }
+    return authorizedRequest<{}>("auth/profile/update/", "PUT", formData);
+  },
 };
+
+
