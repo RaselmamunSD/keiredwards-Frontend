@@ -1028,7 +1028,6 @@ function BillingHistoryContent({ billing }: BillingHistoryProps) {
           </tbody>
         </table>
       </div>
-      <p className="text-xs text-gray-500">PR = Pro-Rated charges may appear for mid-cycle storage upgrades.</p>
     </div>
   );
 }
