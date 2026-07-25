@@ -1,5 +1,14 @@
-export const API_URL =
-  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://localhost:8000";
+const getApiUrl = () => {
+  if (typeof window !== "undefined") {
+    if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+      return process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://localhost:8000";
+    }
+    return window.location.origin;
+  }
+  return process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://localhost:8000";
+};
+
+export const API_URL = getApiUrl();
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
@@ -16,6 +25,13 @@ export interface ApiErrorBody {
   message?: string;
   errors?: Record<string, string[] | string | unknown>;
   status_code?: number;
+}
+
+export interface StoragePlan {
+  gb: number;
+  price: string;
+  description: string;
+  isCurrent?: boolean;
 }
 
 function formatApiErrorMessage(payload: ApiErrorBody): string {
@@ -102,6 +118,7 @@ async function rawRequest<T>(
   const response = await fetch(`${API_URL}/api/v1/${endpoint}`, {
     method,
     headers,
+    cache: "no-store",
     body: body instanceof FormData ? body : (body ? JSON.stringify(body) : undefined),
   });
 
@@ -164,7 +181,9 @@ export const api = {
     last_name?: string;
   }) => rawRequest<{ user: unknown; tokens: { access: string; refresh: string } }>("auth/register/", "POST", payload),
   login: (credentials: { username: string; password: string }) =>
-    rawRequest<{ access: string; refresh: string }>("auth/login/", "POST", credentials),
+    rawRequest<{ access?: string; refresh?: string; requires_2fa?: boolean; temp_token?: string; masked_email?: string }>("auth/login/", "POST", credentials),
+  verify2FA: (payload: { temp_token: string; code: string }) =>
+    rawRequest<{ access: string; refresh: string }>("auth/2fa/verify/", "POST", payload),
   logout: () =>
     authorizedRequest<{}>("auth/logout/", "POST", { refresh: tokenStorage.getRefresh() }),
   passwordReset: (email: string) =>
@@ -192,7 +211,7 @@ export const api = {
       payload
     ),
   paymentsVerify: (reference: string) =>
-    authorizedRequest<{ payment: { status: string; transaction_id: string } }>(
+    authorizedRequest<{ payment: { status: string; transaction_id: string; metadata?: Record<string, any> } }>(
       "payments/verify/",
       "POST",
       { reference }
@@ -214,6 +233,10 @@ export const api = {
         description: string;
         price: number;
       }>;
+      discounts: {
+        discount_2_years_pct: number;
+        discount_3_years_pct: number;
+      };
     }>("payments/pricing/", "GET"),
   dashboardSummary: () =>
     authorizedRequest<{
@@ -316,22 +339,33 @@ export const api = {
       is_active: boolean;
       template: string;
       current_tier: number;
+      category?: string;
+      subject?: string;
+      is_purchased?: boolean;
+      tiers?: Array<{ count: string; label: string; price: string | null }>;
     }>("dashboard/press-release/", "GET"),
   savePressRelease: (payload: Partial<{
     is_active: boolean;
     template: string;
     current_tier: number;
+    category: string;
+    subject: string;
   }>) =>
     authorizedRequest<{
       id: number;
       is_active: boolean;
       template: string;
       current_tier: number;
+      category?: string;
+      subject?: string;
+      is_purchased?: boolean;
+      tiers?: Array<{ count: string; label: string; price: string | null }>;
     }>("dashboard/press-release/", "POST", payload),
   getVaultFiles: () =>
     authorizedRequest<{
       storage_config: { total_storage_gb: number };
-      files: Array<{ id: number; file_name: string; file_size_mb: string }>;
+      files: Array<{ id: number; file_name: string; file_size_mb: string; status?: string; error_message?: string | null }>;
+      storage_plans?: StoragePlan[];
     }>("dashboard/vault-files/", "GET"),
   saveVaultFiles: (payload: {
     total_storage_gb?: number;
@@ -339,7 +373,8 @@ export const api = {
   } | FormData) =>
     authorizedRequest<{
       storage_config: { total_storage_gb: number };
-      files: Array<{ id: number; file_name: string; file_size_mb: string }>;
+      files: Array<{ id: number; file_name: string; file_size_mb: string; status?: string; error_message?: string | null }>;
+      storage_plans?: StoragePlan[];
     }>("dashboard/vault-files/", "POST", payload),
   downloadVaultFile: async (id: number, fileName: string) => {
     const access = tokenStorage.getAccess();
@@ -360,6 +395,60 @@ export const api = {
     a.click();
     a.remove();
     window.URL.revokeObjectURL(url);
+  },
+  getVaultFileStatus: () =>
+    authorizedRequest<{
+      storage_config: { total_storage_gb: number };
+      files: Array<{ id: number; file_name: string; file_size_mb: string; status?: string; error_message?: string | null }>;
+    }>("dashboard/vault-files/status/", "GET"),
+  uploadVaultFilesWithProgress: (
+    formData: FormData,
+    onProgress: (percent: number) => void
+  ): Promise<ApiEnvelope<{
+    storage_config: { total_storage_gb: number };
+    files: Array<{ id: number; file_name: string; file_size_mb: string; status?: string; error_message?: string | null }>;
+    storage_plans?: StoragePlan[];
+  }>> => {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      const apiUrl = typeof window !== "undefined"
+        ? (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+          ? (process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://localhost:8000")
+          : window.location.origin)
+        : (process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://localhost:8000");
+
+      xhr.open("POST", `${apiUrl}/api/v1/dashboard/vault-files/`);
+
+      const access = tokenStorage.getAccess();
+      if (access) {
+        xhr.setRequestHeader("Authorization", `Bearer ${access}`);
+      }
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          onProgress(Math.round((e.loaded / e.total) * 100));
+        }
+      };
+
+      xhr.onload = () => {
+        try {
+          const data = JSON.parse(xhr.responseText);
+          if (xhr.status >= 200 && xhr.status < 300 && data.success !== false) {
+            resolve(data);
+          } else {
+            reject(new Error(data.message || "Upload failed."));
+          }
+        } catch {
+          reject(new Error("Invalid server response."));
+        }
+      };
+
+      xhr.onerror = () => reject(new Error("Network error during upload."));
+      xhr.ontimeout = () => reject(new Error("Upload timed out."));
+      xhr.timeout = 3600000; // 1 hour timeout
+
+      xhr.send(formData);
+    });
   },
   getSetupAccounting: () =>
     authorizedRequest<{
@@ -406,6 +495,10 @@ export const api = {
     }
     return authorizedRequest<{}>("auth/profile/update/", "PUT", formData);
   },
+  deleteAccount: (payload: { email: string; password: string }) =>
+    authorizedRequest<{}>("auth/delete-account/", "POST", payload),
+  requestCheckInLink: (payload: { email: string; password?: string }) =>
+    rawRequest<{ checkin_email?: string; magic_link?: string }>("dashboard/checkin/request-link/", "POST", payload),
+  verifyCheckInLink: (payload: { token: string }) =>
+    rawRequest<{ access: string; refresh: string }>("dashboard/checkin/verify-link/", "POST", payload),
 };
-
-

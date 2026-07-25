@@ -1,7 +1,7 @@
 // Tab 7 — Setup & Accounting
 
 import { useState, useEffect } from "react";
-import { MdOutlineKeyboardArrowDown, MdOutlineKeyboardArrowUp } from "react-icons/md";
+import { MdOutlineKeyboardArrowDown, MdOutlineKeyboardArrowUp, MdVisibility, MdVisibilityOff } from "react-icons/md";
 import Swal from "sweetalert2";
 import { z } from "zod";
 import { api } from "@/lib/api";
@@ -128,21 +128,38 @@ function AccordionContent({ children }: { children: React.ReactNode }) {
   );
 }
 
-function InputField({ label, type, value, onChange, placeholder, error }: {
+function InputField({ label, type, value, onChange, placeholder, error, autoComplete }: {
   label: string; type: string; value: string; onChange: (v: string) => void;
-  placeholder?: string; error?: string;
+  placeholder?: string; error?: string; autoComplete?: string;
 }) {
+  const [showPassword, setShowPassword] = useState(false);
+  const isPassword = type === "password";
+  const inputType = isPassword ? (showPassword ? "text" : "password") : type;
+
   return (
     <div className="space-y-1.5">
       <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">{label}</label>
-      <input
-        type={type}
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        placeholder={placeholder}
-        className={`w-full border rounded-lg px-4 py-2.5 text-sm bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 transition-all
-          ${error ? "border-red-400 focus:ring-red-200" : "border-gray-200 focus:ring-orange-200 focus:border-orange-400"}`}
-      />
+      <div className="relative">
+        <input
+          type={inputType}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder={placeholder}
+          autoComplete={autoComplete}
+          className={`w-full border rounded-lg px-4 py-2.5 text-sm bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 transition-all pr-10
+            ${error ? "border-red-400 focus:ring-red-200" : "border-gray-200 focus:ring-orange-200 focus:border-orange-400"}`}
+        />
+        {isPassword && (
+          <button
+            type="button"
+            className="absolute inset-y-0 right-0 px-3 flex items-center text-gray-500 hover:text-gray-700"
+            onClick={() => setShowPassword(!showPassword)}
+            tabIndex={-1}
+          >
+            {showPassword ? <MdVisibilityOff size={20} /> : <MdVisibility size={20} />}
+          </button>
+        )}
+      </div>
       {error && <p className="text-red-500 text-xs">{error}</p>}
     </div>
   );
@@ -224,6 +241,7 @@ function LoginContent({ userEmail, onSuccess }: { userEmail: string; onSuccess?:
   const [errors, setErrors] = useState<AnyErrors>({});
   const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
   const setField = (key: string, val: string) => { setForm(p => ({ ...p, [key]: val })); setErrors(p => ({ ...p, [key]: undefined })); };
 
   const handleSave = async () => {
@@ -310,7 +328,8 @@ function LoginContent({ userEmail, onSuccess }: { userEmail: string; onSuccess?:
         type="password"
         value={form.currentPassword}
         onChange={v => setField("currentPassword", v)}
-        placeholder="••••••••"
+        placeholder=""
+        autoComplete="new-password"
         error={errors.currentPassword}
       />
 
@@ -330,14 +349,24 @@ function LoginContent({ userEmail, onSuccess }: { userEmail: string; onSuccess?:
         <>
           <div className="space-y-1.5">
             <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">Enter New Password</label>
-            <input
-              type="password"
-              value={form.newPassword}
-              onChange={e => setField("newPassword", e.target.value)}
-              placeholder="Min. 8 characters"
-              className={`w-full border rounded-lg px-4 py-2.5 text-sm bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 transition-all
-                ${errors.newPassword ? "border-red-400 focus:ring-red-200" : "border-gray-200 focus:ring-orange-200 focus:border-orange-400"}`}
-            />
+            <div className="relative">
+              <input
+                type={showNewPassword ? "text" : "password"}
+                value={form.newPassword}
+                onChange={e => setField("newPassword", e.target.value)}
+                placeholder="Min. 8 characters"
+                className={`w-full border rounded-lg px-4 py-2.5 text-sm bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 transition-all pr-10
+                  ${errors.newPassword ? "border-red-400 focus:ring-red-200" : "border-gray-200 focus:ring-orange-200 focus:border-orange-400"}`}
+              />
+              <button
+                type="button"
+                className="absolute inset-y-0 right-0 px-3 flex items-center text-gray-500 hover:text-gray-700"
+                onClick={() => setShowNewPassword(!showNewPassword)}
+                tabIndex={-1}
+              >
+                {showNewPassword ? <MdVisibilityOff size={20} /> : <MdVisibility size={20} />}
+              </button>
+            </div>
             {errors.newPassword && <p className="text-red-500 text-xs">{errors.newPassword}</p>}
             {/* Live strength indicator shown while typing */}
             <PasswordStrengthIndicator password={form.newPassword} />
@@ -380,7 +409,7 @@ function LoginSecurityContent({ hasTwoFA }: { hasTwoFA: boolean }) {
       <div className="text-sm space-y-4">
         <p className="text-gray-600 leading-relaxed">
           You have not purchased two-factor authentication (2FA).<br />
-          To do so please select <strong>New Orders</strong> and select Two-Factor Authentication (2FA).
+          To do so please select <strong>Additional Services</strong> and select Two-Factor Authentication (2FA).
         </p>
       </div>
     );
@@ -439,197 +468,324 @@ function LoginSecurityContent({ hasTwoFA }: { hasTwoFA: boolean }) {
   );
 }
 
-// ─── Active Services ──────────────────────────────────────────────────────────
+// ─── Subscription (Accounting summary) ───────────────────────────────────────
 
-interface ActiveServicesProps {
+function SubscriptionRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-0.5 px-4 py-3 border-b border-gray-100 last:border-b-0 min-h-[72px]">
+      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{label}</span>
+      <div className="text-sm font-bold text-gray-900">{value}</div>
+    </div>
+  );
+}
+
+function isWithinThreeMonthsOfExpiry(activeUntil: string): boolean {
+  const parsed = Date.parse(activeUntil);
+  if (isNaN(parsed)) return false;
+  const expiry = parsed;
+  const threeMonthsMs = 90 * 24 * 60 * 60 * 1000;
+  return expiry - Date.now() <= threeMonthsMs && expiry > Date.now();
+}
+
+interface SubscriptionContentProps {
   services: Array<{ name: string; additional_info: string; active_until: string; is_purchased: boolean }>;
-  onPurchase: (name: string) => Promise<void>;
+  billing: Array<{ id?: number; date: string; description: string; amount: string; is_included?: boolean }>;
+  startedDate: string;
+  storageUsedGB: number;
+  storageTotalGB: number;
   onRenew: (names: string[]) => Promise<void>;
 }
 
-function ActiveServicesContent({ services: initialServices, onPurchase, onRenew }: ActiveServicesProps) {
-  const [services, setServices] = useState(initialServices.map(s => ({ ...s, renew: false })));
+function SubscriptionContent({ services, billing, startedDate, storageUsedGB, storageTotalGB, onRenew }: SubscriptionContentProps) {
   const [renewSuccess, setRenewSuccess] = useState(false);
-  const [purchaseSuccess, setPurchaseSuccess] = useState<string | null>(null);
+  const [renewing, setRenewing] = useState<string | null>(null);
 
-  useEffect(() => {
-    setServices(initialServices.map(s => ({ ...s, renew: false })));
-  }, [initialServices]);
+  const purchasedServices = services.filter((s) => s.is_purchased);
 
-  const handlePurchaseNow = async (serviceName: string) => {
-    await onPurchase(serviceName);
-    setPurchaseSuccess(serviceName);
-    setTimeout(() => setPurchaseSuccess(null), 3000);
+  const handleRenewSingle = async (name: string) => {
+    setRenewing(name);
+    try {
+      await onRenew([name]);
+      setRenewSuccess(true);
+      setTimeout(() => setRenewSuccess(false), 3000);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setRenewing(null);
+    }
   };
 
-  const handleRenewSelected = async () => {
-    const selected = services.filter(s => s.renew).map(s => s.name);
-    if (selected.length === 0) return;
-    await onRenew(selected);
-    setRenewSuccess(true);
-    setTimeout(() => setRenewSuccess(false), 3000);
+  const getPrice = (name: string) => {
+    if (name === "I Was Killed For This Information") return "$91.00";
+    if (name === "Additional Storage") return "$15.00+"; 
+    if (name === "Two-Factor Authentication") return "$39.00";
+    if (name === "Private Email") return "$39.00";
+    if (name === "Press Release") return "$250.00+";
+    return "—";
+  };
+  
+  const getLabel = (s: any) => {
+    if (s.name === "I Was Killed For This Information") return s.additional_info ? `${s.additional_info.replace(" Check-in", "")} Check-In` : "Main Check-In Plan";
+    if (s.name === "Additional Storage") return `Extra Storage (${s.additional_info})`;
+    if (s.name === "Press Release") return `Press Release (${s.additional_info})`;
+    return s.name;
   };
 
   return (
     <div className="space-y-4">
       {renewSuccess && (
         <div className="bg-green-50 border border-green-300 text-green-700 text-xs px-4 py-2.5 rounded-lg flex items-center gap-2">
-          <span>✓</span> Selected services have been renewed successfully.
+          <span>✓</span> Service renewed successfully.
         </div>
       )}
-      {purchaseSuccess && (
-        <div className="bg-green-50 border border-green-300 text-green-700 text-xs px-4 py-2.5 rounded-lg flex items-center gap-2">
-          <span>✓</span> &quot;{purchaseSuccess}&quot; has been purchased successfully.
+
+      <div className="border border-gray-200 rounded-xl overflow-hidden">
+        <div className="bg-blue-50 px-5 py-3 border-b border-gray-200 flex justify-between items-center">
+          <h3 className="text-xs font-bold text-blue-700 uppercase tracking-widest">Active Subscriptions</h3>
+          <span className="text-xs text-blue-600 font-medium">Storage Used: {storageUsedGB} GB / {storageTotalGB} GB</span>
         </div>
-      )}
-      <div className="overflow-x-auto rounded-lg border border-gray-200">
-        <table className="w-full text-sm border-collapse">
-          <thead>
-            <tr className="bg-gray-50 border-b border-gray-200">
-              <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Service</th>
-              <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider hidden sm:table-cell">Additional Information</th>
-              <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Active Until</th>
-              <th className="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">Renew</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {services.map((s, i) => (
-              <tr key={i} className={`transition-colors ${s.is_purchased ? "bg-green-50/40 hover:bg-green-50" : "bg-red-50/40 hover:bg-red-50"}`}>
-                <td className="px-2 py-3 font-semibold text-gray-800 text-sm">{s.name}</td>
-                <td className="px-2 py-3 text-gray-500 text-sm hidden sm:table-cell">{s.additional_info}</td>
-                <td className="px-2 py-3 text-sm">
-                  {s.is_purchased
-                    ? <span className="text-gray-700">{s.active_until}</span>
-                    : <span className="border border-red-400 text-red-500 text-xs font-bold rounded-full px-2 py-0.5">NOT PURCHASED</span>
-                  }
-                </td>
-                <td className="px-4 py-3 text-center">
-                  {s.is_purchased
-                    ? (
-                      <input
-                        type="checkbox"
-                        checked={s.renew}
-                        onChange={e => setServices(prev => prev.map((x, j) => j === i ? { ...x, renew: e.target.checked } : x))}
-                        className="w-4 h-4 accent-orange-400 cursor-pointer"
-                      />
-                    )
-                    : (
-                      <button
-                        onClick={() => handlePurchaseNow(s.name)}
-                        className="bg-red-500 hover:bg-red-400 text-white text-xs font-bold px-2 py-1.5 rounded-lg transition-colors cursor-pointer"
-                      >
-                        PURCHASE NOW
-                      </button>
-                    )
-                  }
-                </td>
+        
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm whitespace-nowrap">
+            <thead className="bg-gray-50 border-b border-gray-100 text-gray-500 text-xs uppercase">
+              <tr>
+                <th className="px-5 py-3 font-semibold">Service</th>
+                <th className="px-5 py-3 font-semibold">Start Date</th>
+                <th className="px-5 py-3 font-semibold">End Date</th>
+                <th className="px-5 py-3 font-semibold">Price/Yr</th>
+                <th className="px-5 py-3 font-semibold text-right">Action</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-gray-100 bg-white">
+              {purchasedServices.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-5 py-8 text-center text-gray-500">
+                    No active subscriptions found.
+                  </td>
+                </tr>
+              ) : (
+                purchasedServices.map((s, i) => {
+                  const isExpiringSoon = isWithinThreeMonthsOfExpiry(s.active_until);
+                  return (
+                    <tr key={i} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-5 py-4 text-gray-900 font-medium">{getLabel(s)}</td>
+                      <td className="px-5 py-4 text-gray-600">{startedDate}</td>
+                      <td className="px-5 py-4">
+                        <span className={`font-medium ${isExpiringSoon ? "text-orange-600" : "text-gray-900"}`}>
+                          {s.active_until}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4 text-gray-600">{getPrice(s.name)}</td>
+                      <td className="px-5 py-4 text-right">
+                        {isExpiringSoon ? (
+                          <button
+                            onClick={() => handleRenewSingle(s.name)}
+                            disabled={renewing === s.name}
+                            className="bg-orange-400 hover:bg-orange-500 disabled:opacity-50 text-white text-xs font-bold px-4 py-1.5 rounded transition-colors"
+                          >
+                            {renewing === s.name ? "RENEWING..." : "RENEW"}
+                          </button>
+                        ) : (
+                          <span className="text-gray-400 text-xs">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
-      <p className="text-xs text-gray-500">*Press Release is a one-time service deployed only when the check-in is missed. It&apos;s valid until the last day of an active service agreement or deployment, whichever comes first.</p>
-      <button
-        onClick={handleRenewSelected}
-        className="bg-orange-400 hover:bg-orange-500 text-white text-xs font-bold px-5 py-2.5 rounded-lg transition-colors"
-      >
-        RENEW SELECTED
-      </button>
     </div>
   );
 }
 
-// ─── New Orders ───────────────────────────────────────────────────────────────
+function ActiveServicesContent({
+  services,
+  billing,
+  onRenew,
+  startedDate,
+  storageUsedGB,
+  storageTotalGB,
+}: {
+  services: Array<{ name: string; additional_info: string; active_until: string; is_purchased: boolean }>;
+  billing: Array<{ id?: number; date: string; description: string; amount: string; is_included?: boolean }>;
+  onRenew: (names: string[]) => Promise<void>;
+  startedDate: string;
+  storageUsedGB: number;
+  storageTotalGB: number;
+}) {
+  return <SubscriptionContent services={services} billing={billing} startedDate={startedDate} storageUsedGB={storageUsedGB} storageTotalGB={storageTotalGB} onRenew={onRenew} />;
+}
 
-function NewOrdersContent({ onSuccess }: { onSuccess?: () => void }) {
+// ─── Additional Services (formerly New Orders) ───────────────────────────────
+interface NewOrdersContentProps {
+  addonsList: Array<{ key: string; label: string; description: string; price: number }>;
+  pressOptionsList: Array<{ key: string; label: string; description: string; price: number }>;
+  purchasedServices: Array<{ name: string; is_purchased: boolean }>;
+  onSuccess?: () => void;
+}
+
+function NewOrdersContent({ addonsList, pressOptionsList, purchasedServices, onSuccess }: NewOrdersContentProps) {
   const [step, setStep] = useState<NewOrderStep>("addons");
-  const [addons, setAddons] = useState<NewOrderAddons>({ privateEmail: false, twoFA: false });
+  const [selectedAddons, setSelectedAddons] = useState<Record<string, boolean>>({});
   const [deliveryChoice, setDeliveryChoice] = useState<"trusted" | "press" | "">("");
-  const [pressRelease, setPressRelease] = useState<NewOrderPressRelease>({
-    sendToRecipients: true, pressOption: "", category: "",
+  const [pressRelease, setPressRelease] = useState<{
+    sendToRecipients: boolean;
+    pressOption: string;
+    category: string;
+  }>({
+    sendToRecipients: true,
+    pressOption: "",
+    category: "",
   });
   const [payment, setPayment] = useState<NewOrderPayment>({ extraStorageGB: 3, checkInService: "", checkInTerm: "" });
-  const [orderSuccess, setOrderSuccess] = useState(false);
-  const [loading, setLoading] = useState(false);
+
+  const isPrivateEmailPurchased = purchasedServices.some((s) => s.name === "Private Email" && s.is_purchased);
+  const is2FAPurchased = purchasedServices.some((s) => s.name === "Two-Factor Authentication" && s.is_purchased);
+
+  const baseAddonsList = addonsList && addonsList.length > 0 ? addonsList : [
+    { key: "private_email", label: "Private - Check In Email address", description: "", price: 39 },
+    { key: "2fa", label: "Secured Login - Two-Factor Authentication (2FA)", description: "", price: 39 },
+    { key: "extra_storage", label: "Additional Storage", description: "Add extra vault storage ($15/GB/year)", price: 15 },
+  ];
+
+  const finalAddonsList = baseAddonsList.filter((addon) => {
+    if (addon.key === "private_email" && isPrivateEmailPurchased) return false;
+    if (addon.key === "2fa" && is2FAPurchased) return false;
+    if (addon.key === "extra_storage") return true;
+    return true;
+  });
+
+  const finalPressOptions = pressOptionsList && pressOptionsList.length > 0 ? pressOptionsList : [
+    { key: "press_release_250", label: "250 media organizations", description: "", price: 250 },
+    { key: "press_release_500", label: "500 media organizations", description: "", price: 495 },
+    { key: "press_release_1000", label: "1,000+ media organizations", description: "", price: 695 }
+  ];
+
+  // Calculate pricing dynamically
+  const addonsTotal = finalAddonsList
+    .filter(a => selectedAddons[a.key])
+    .reduce((sum, a) => sum + a.price, 0);
+
+  const pressTotal = deliveryChoice === "press"
+    ? (finalPressOptions.find(p => p.key === pressRelease.pressOption)?.price ?? 0)
+    : 0;
+
+  const storageTotal = payment.extraStorageGB * 15;
+  const checkInTotal = (payment.checkInService && payment.checkInTerm ? 91 : 0);
+  const total = addonsTotal + pressTotal + storageTotal + checkInTotal;
 
   const handlePayNow = async () => {
-    const servicesToPurchase: string[] = [];
-    if (addons.privateEmail) {
-      servicesToPurchase.push("Private Email");
-    }
-    if (addons.twoFA) {
-      servicesToPurchase.push("Two-Factor Authentication");
-    }
-    if (deliveryChoice === "press") {
-      servicesToPurchase.push("Press Release");
-    }
-
-    setLoading(true);
     try {
-      const payload: any = {};
-      if (servicesToPurchase.length > 0) {
-        payload.purchase_services = servicesToPurchase;
-      }
-      if (payment.extraStorageGB > 0) {
-        payload.extra_storage_gb = payment.extraStorageGB;
-      }
-      if (payment.checkInService) {
-        payload.check_in_service = payment.checkInService;
+      const orderItems: Array<{ label: string; price: number }> = [];
+      const purchaseServices: string[] = [];
+
+      // Add selected addons
+      finalAddonsList.forEach(a => {
+        if (selectedAddons[a.key]) {
+          orderItems.push({ label: a.label, price: a.price });
+          if (a.key === "private_email") {
+            purchaseServices.push("Private Email");
+          } else if (a.key === "2fa") {
+            purchaseServices.push("Two-Factor Authentication");
+          } else {
+            purchaseServices.push(a.label);
+          }
+        }
+      });
+
+      // Add press option
+      if (deliveryChoice === "press" && pressRelease.pressOption) {
+        const selectedPress = finalPressOptions.find(p => p.key === pressRelease.pressOption);
+        if (selectedPress) {
+          orderItems.push({ label: selectedPress.label, price: selectedPress.price });
+          purchaseServices.push("Press Release");
+        }
       }
 
-      await api.updateSetupAccounting(payload);
-      setOrderSuccess(true);
-      if (onSuccess) {
-        onSuccess();
+      // Add storage
+      if (payment.extraStorageGB > 0) {
+        orderItems.push({ label: `Additional Storage (${payment.extraStorageGB} GB)`, price: storageTotal });
       }
+
+      // Add check-in plan
+      if (payment.checkInService && payment.checkInTerm) {
+        orderItems.push({ label: `${payment.checkInService} (${payment.checkInTerm})`, price: checkInTotal });
+      }
+
+      if (orderItems.length === 0) {
+        Swal.fire({
+          title: "Empty Order",
+          text: "Please select at least one service or add extra storage before paying.",
+          icon: "warning"
+        });
+        return;
+      }
+
+      localStorage.setItem("checkout_amount", total.toString());
+      localStorage.setItem("checkout_order_items", JSON.stringify(orderItems));
+      localStorage.setItem(
+        "checkout_metadata",
+        JSON.stringify({
+          type: "setup_accounting_purchase",
+          purchase_services: purchaseServices,
+          extra_storage_gb: payment.extraStorageGB > 0 ? payment.extraStorageGB : undefined,
+          check_in_service: payment.checkInService || undefined,
+          press_option: deliveryChoice === "press" ? pressRelease.pressOption : undefined
+        })
+      );
+
+      window.location.href = "/payment";
     } catch (err) {
-      console.error("Order failed", err);
+      console.error("Initiating payment failed", err);
       Swal.fire({
         title: "Order Failed",
-        text: "There was an error processing your order. Please try again.",
-        icon: "error",
+        text: "Failed to initiate checkout. Please try again.",
+        icon: "error"
       });
-    } finally {
-      setLoading(false);
     }
   };
 
   if (step === "addons") {
     return (
       <div className="space-y-3 text-sm">
-        {[
-          { key: "privateEmail" as const, title: "Private - Check In Email address", price: "$39 / year" },
-          { key: "twoFA" as const, title: "Secured Login - Two-Factor Authentication (2FA)", price: "$39 / year" },
-        ].map(({ key, title, price }) => (
+        <p className="text-xs text-gray-500 mb-2">Select additional services you have not yet purchased:</p>
+        {finalAddonsList.length === 0 ? (
+          <p className="text-sm text-gray-600">All available add-on services are already active on your account.</p>
+        ) : (
+          finalAddonsList.map((addon) => (
           <div
-            key={key}
+            key={addon.key}
             className={`border rounded-lg p-4 flex flex-wrap items-center justify-between gap-3 transition-colors cursor-pointer
-              ${addons[key] ? "border-green-400 bg-green-50" : "border-gray-200 bg-white hover:bg-gray-50"}`}
-            onClick={() => setAddons(p => ({ ...p, [key]: !p[key] }))}
+              ${selectedAddons[addon.key] ? "border-green-400 bg-green-50" : "border-gray-200 bg-white hover:bg-gray-50"}`}
+            onClick={() => setSelectedAddons(p => ({ ...p, [addon.key]: !p[addon.key] }))}
           >
             <div className="flex items-center gap-3 flex-1 min-w-0">
               <input
                 type="checkbox"
-                checked={addons[key]}
-                onChange={() => setAddons(p => ({ ...p, [key]: !p[key] }))}
+                checked={!!selectedAddons[addon.key]}
+                onChange={() => setSelectedAddons(p => ({ ...p, [addon.key]: !p[addon.key] }))}
                 onClick={e => e.stopPropagation()}
                 className="w-4 h-4 accent-green-500 shrink-0 cursor-pointer"
               />
-              <span className={`font-medium ${addons[key] ? "text-green-800" : "text-gray-800"}`}>{title}</span>
+              <span className={`font-medium ${selectedAddons[addon.key] ? "text-green-800" : "text-gray-800"}`}>{addon.label}</span>
             </div>
             <div className="flex items-center gap-3 shrink-0" onClick={e => e.stopPropagation()}>
-              <span className="text-red-500 font-bold text-sm">{price}</span>
+              <span className="text-red-500 font-bold text-sm">${addon.price} / year</span>
               <button
-                onClick={() => setAddons(p => ({ ...p, [key]: !p[key] }))}
-                className={`text-xs font-bold px-4 py-2 rounded-lg transition-colors ${addons[key] ? "bg-red-500 hover:bg-red-400 text-white" : "bg-green-500 hover:bg-green-400 text-white"}`}
+                onClick={() => setSelectedAddons(p => ({ ...p, [addon.key]: !p[addon.key] }))}
+                className={`text-xs font-bold px-4 py-2 rounded-lg transition-colors ${selectedAddons[addon.key] ? "bg-red-500 hover:bg-red-400 text-white" : "bg-green-500 hover:bg-green-400 text-white"}`}
               >
-                {addons[key] ? "REMOVE" : "ADD"}
+                {selectedAddons[addon.key] ? "REMOVE" : "ADD"}
               </button>
             </div>
           </div>
-        ))}
+        ))
+        )}
         <div className="flex justify-end pt-2">
-          <button onClick={() => setStep("delivery")} className="bg-green-500 hover:bg-green-400 text-white text-sm font-bold px-6 py-2.5 rounded-lg transition-colors">
+          <button onClick={() => setStep("payment")} className="bg-green-500 hover:bg-green-400 text-white text-sm font-bold px-6 py-2.5 rounded-lg transition-colors">
             CONTINUE →
           </button>
         </div>
@@ -706,20 +862,16 @@ function NewOrdersContent({ onSuccess }: { onSuccess?: () => void }) {
         <div>
           <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Press Release</p>
           <div className="space-y-2">
-            {([
-              { key: "press100" as const, label: "100 media organizations — $110" },
-              { key: "press250" as const, label: "250 media organizations — $250" },
-              { key: "press500" as const, label: "500 media organizations — $495" },
-            ]).map(({ key, label }) => (
-              <label key={key} className={`flex items-center gap-3 border rounded-lg px-4 py-3 cursor-pointer transition-colors ${pressRelease.pressOption === key ? "border-green-300 bg-green-50" : "border-gray-200 hover:bg-gray-50"}`}>
+            {finalPressOptions.map((opt) => (
+              <label key={opt.key} className={`flex items-center gap-3 border rounded-lg px-4 py-3 cursor-pointer transition-colors ${pressRelease.pressOption === opt.key ? "border-green-300 bg-green-50" : "border-gray-200 hover:bg-gray-50"}`}>
                 <input
                   type="radio"
                   name="pressOption"
-                  checked={pressRelease.pressOption === key}
-                  onChange={() => setPressRelease(p => ({ ...p, pressOption: key, category: "" }))}
+                  checked={pressRelease.pressOption === opt.key}
+                  onChange={() => setPressRelease(p => ({ ...p, pressOption: opt.key, category: "" }))}
                   className="w-4 h-4 accent-green-500"
                 />
-                <span className="font-medium text-gray-700">{label}</span>
+                <span className="font-medium text-gray-700">{opt.label} — ${opt.price}</span>
               </label>
             ))}
           </div>
@@ -754,28 +906,11 @@ function NewOrdersContent({ onSuccess }: { onSuccess?: () => void }) {
     );
   }
 
-  const total = (payment.checkInService && payment.checkInTerm ? 91 : 0) + payment.extraStorageGB * 15;
-
-  if (orderSuccess) {
-    return (
-      <div className="text-sm space-y-4">
-        <div className="bg-green-50 border border-green-300 text-green-700 px-4 py-4 rounded-lg flex items-center gap-3">
-          <span className="text-2xl">✓</span>
-          <div>
-            <p className="font-bold">Order Placed Successfully!</p>
-            <p className="text-xs text-green-600 mt-0.5">Your order has been submitted. You will receive a confirmation email shortly.</p>
-          </div>
-        </div>
-        <button onClick={() => { setStep("addons"); setOrderSuccess(false); setAddons({ privateEmail: false, twoFA: false }); setDeliveryChoice(""); setPayment({ extraStorageGB: 3, checkInService: "", checkInTerm: "" }); }}
-          className="bg-orange-400 hover:bg-orange-500 text-white text-xs font-bold px-5 py-2.5 rounded-lg transition-colors">
-          PLACE ANOTHER ORDER
-        </button>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-4 text-sm">
+      <p className="text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+        Pro-rated charges apply for mid-cycle additional service purchases via PayPal.
+      </p>
       <div>
         <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Add Extra Storage — $15/GB/Year</p>
         <div className="flex items-center gap-3">
@@ -811,6 +946,13 @@ function NewOrdersContent({ onSuccess }: { onSuccess?: () => void }) {
           <span className="text-xs font-bold text-gray-600 uppercase tracking-wider">Price</span>
         </div>
         {[
+          ...finalAddonsList.filter(a => selectedAddons[a.key]).map(a => ({ label: a.label, price: `$${a.price}` })),
+          ...(deliveryChoice === "press" && pressRelease.pressOption ? [
+            {
+              label: finalPressOptions.find(p => p.key === pressRelease.pressOption)?.label ?? "Press Release",
+              price: `$${finalPressOptions.find(p => p.key === pressRelease.pressOption)?.price ?? 0}`
+            }
+          ] : []),
           { label: `Main Service | ${payment.checkInService || "—"}`, price: payment.checkInService ? "$91" : "—" },
           { label: `Additional Storage ${payment.extraStorageGB} GB`, price: `$${payment.extraStorageGB * 15}` },
         ].map((r, i) => (
@@ -822,7 +964,7 @@ function NewOrdersContent({ onSuccess }: { onSuccess?: () => void }) {
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-        <button onClick={() => setStep(deliveryChoice === "press" ? "press-release" : "delivery")} className="bg-red-500 hover:bg-red-400 text-white text-sm font-bold px-5 py-2.5 rounded-lg transition-colors">← BACK</button>
+        <button onClick={() => setStep("addons")} className="bg-red-500 hover:bg-red-400 text-white text-sm font-bold px-5 py-2.5 rounded-lg transition-colors">← BACK</button>
         <div className="flex items-center gap-3">
           <div className="bg-green-500 text-white text-xs font-bold px-4 py-2.5 rounded-lg text-center min-w-24">
             <div className="text-green-100 text-xs">Total Price</div>
@@ -830,10 +972,9 @@ function NewOrdersContent({ onSuccess }: { onSuccess?: () => void }) {
           </div>
           <button
             onClick={handlePayNow}
-            disabled={loading}
-            className="bg-green-500 hover:bg-green-400 text-white text-sm font-bold px-6 py-2.5 rounded-lg transition-colors disabled:bg-gray-400"
+            className="bg-green-500 hover:bg-green-400 text-white text-sm font-bold px-6 py-2.5 rounded-lg transition-colors"
           >
-            {loading ? "PROCESSING..." : "PAY NOW"}
+            PAY NOW
           </button>
         </div>
       </div>
@@ -844,7 +985,7 @@ function NewOrdersContent({ onSuccess }: { onSuccess?: () => void }) {
 // ─── Billing History ──────────────────────────────────────────────────────────
 
 interface BillingHistoryProps {
-  billing: Array<{ date: string; description: string; amount: string; is_included?: boolean }>;
+  billing: Array<{ id?: number; date: string; description: string; amount: string; is_included?: boolean }>;
 }
 
 function BillingHistoryContent({ billing }: BillingHistoryProps) {
@@ -854,24 +995,40 @@ function BillingHistoryContent({ billing }: BillingHistoryProps) {
         <table className="w-full text-sm border-collapse">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-200">
-              <th className="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Date — Description</th>
-              <th className="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider">Amount</th>
+              <th className="px-3 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Date</th>
+              <th className="px-3 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Order #</th>
+              <th className="px-3 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Method</th>
+              <th className="px-3 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Service</th>
+              <th className="px-3 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider">Amount</th>
+              <th className="px-3 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Transaction Code</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {billing.map((r, i) => (
-              <tr key={i} className="bg-white hover:bg-gray-50 transition-colors">
-                <td className="px-4 py-3 text-gray-700">
-                  <span className="font-semibold">{r.date}</span> — {r.description}
-                </td>
-                <td className={`px-4 py-3 text-right font-semibold ${r.is_included ? "text-green-600" : "text-gray-800"}`}>
-                  {r.is_included ? "Included" : r.amount}
-                </td>
-              </tr>
-            ))}
+            {billing.map((r, i) => {
+              const txId = r.id ? String(r.id).padStart(3, "0") : String(i + 1).padStart(3, "0");
+              const ppId = r.id ? String(r.id).padStart(2, "0") : String(i + 1).padStart(2, "0");
+              const dateStr = r.date.replace(/\//g, "");
+              return (
+                <tr key={i} className="bg-white hover:bg-gray-50 transition-colors">
+                  <td className="px-3 py-3 text-gray-700 whitespace-nowrap font-semibold">{r.date}</td>
+                  <td className="px-3 py-3 text-gray-600 font-mono text-xs whitespace-nowrap">
+                    26-{dateStr}-{txId}
+                  </td>
+                  <td className="px-3 py-3 text-gray-700 whitespace-nowrap">Credit Card</td>
+                  <td className="px-3 py-3 text-gray-700">{r.description}</td>
+                  <td className={`px-3 py-3 text-right font-semibold whitespace-nowrap ${r.is_included ? "text-green-600" : "text-gray-800"}`}>
+                    {r.is_included ? "Included" : r.amount}
+                  </td>
+                  <td className="px-3 py-3 text-gray-500 font-mono text-xs whitespace-nowrap">
+                    {r.is_included ? "—" : `TXN-${dateStr}${ppId}`}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
+      <p className="text-xs text-gray-500">PR = Pro-Rated charges may appear for mid-cycle storage upgrades.</p>
     </div>
   );
 }
@@ -925,8 +1082,9 @@ function CancelContent() {
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState<AnyErrors>({});
   const [submitted, setSubmitted] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  const handleCancel = () => {
+  const handleCancel = async () => {
     setSubmitted(true);
     const result = cancelSchema.safeParse({ email, password });
     if (!result.success) {
@@ -935,27 +1093,65 @@ function CancelContent() {
       return;
     }
 
-    Swal.fire({
+    const confirmed = await Swal.fire({
       title: "Are you sure?",
-      text: "Account cancellation submitted. All data will be permanently deleted.",
+      text: "This will permanently delete your account and all data. This action cannot be undone.",
       icon: "warning",
       showCancelButton: true,
-      confirmButtonColor: "#3085d6",
-      cancelButtonColor: "#d33",
-      confirmButtonText: "Yes, delete it!"
-    }).then((result) => {
-      if (result.isConfirmed) Swal.fire({
-        title: "Account Cancelled",
-        text: "Your account has been permanently deleted.",
-        icon: "success"
-      });
+      confirmButtonColor: "#e8281e",
+      cancelButtonColor: "#555",
+      confirmButtonText: "Yes, delete my account!",
+      cancelButtonText: "Cancel",
     });
+
+    if (!confirmed.isConfirmed) return;
+
+    setLoading(true);
+    try {
+      await api.deleteAccount({ email, password });
+
+      // Clear all auth tokens and local storage
+      const { tokenStorage } = await import("@/lib/api");
+      tokenStorage.clear();
+      localStorage.clear();
+      sessionStorage.clear();
+
+      await Swal.fire({
+        title: "Account Deleted",
+        text: "Your account has been permanently deleted. You will now be redirected.",
+        icon: "success",
+        timer: 2500,
+        showConfirmButton: false,
+      });
+
+      // Redirect to landing page
+      window.location.href = "/";
+    } catch (err: unknown) {
+      setLoading(false);
+      if (err && typeof err === "object" && "body" in err) {
+        const apiErr = err as { body?: { errors?: Record<string, string[] | string> } };
+        const fieldErrors = apiErr.body?.errors || {};
+        const mapped: AnyErrors = {};
+        for (const [key, val] of Object.entries(fieldErrors)) {
+          mapped[key] = Array.isArray(val) ? val[0] : String(val);
+        }
+        if (Object.keys(mapped).length > 0) {
+          setErrors(mapped);
+          return;
+        }
+      }
+      Swal.fire({
+        title: "Error",
+        text: err instanceof Error ? err.message : "Failed to delete account. Please try again.",
+        icon: "error",
+      });
+    }
   };
 
   return (
     <div className="text-sm space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <InputField label="Email Address" type="email" value={email} onChange={v => { setEmail(v); if (submitted) setErrors(p => ({ ...p, email: undefined })); }} placeholder="your@email.com" error={errors.email} />
+        <InputField label="Login Email Address" type="email" value={email} onChange={v => { setEmail(v); if (submitted) setErrors(p => ({ ...p, email: undefined })); }} placeholder="your@email.com" error={errors.email} />
         <InputField label="Password" type="password" value={password} onChange={v => { setPassword(v); if (submitted) setErrors(p => ({ ...p, password: undefined })); }} placeholder="••••••••" error={errors.password} />
       </div>
 
@@ -973,13 +1169,15 @@ function CancelContent() {
 
       <button
         onClick={handleCancel}
-        className="w-full bg-red-500 hover:bg-red-600 text-white text-sm font-bold py-3.5 rounded-lg transition-colors tracking-wide cursor-pointer"
+        disabled={loading}
+        className="w-full bg-red-500 hover:bg-red-600 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-bold py-3.5 rounded-lg transition-colors tracking-wide cursor-pointer"
       >
-        CANCEL ALL SERVICES — DELETE MY VAULT
+        {loading ? "DELETING ACCOUNT…" : "CANCEL ALL SERVICES — DELETE MY VAULT"}
       </button>
     </div>
   );
 }
+
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
@@ -987,8 +1185,11 @@ export default function SetupAccounting({ onRefresh }: { onRefresh?: () => void 
   const [data, setData] = useState<{
     config: { id: number; two_fa_enabled: boolean; two_fa_email: string; has_two_fa: boolean };
     services: Array<{ name: string; additional_info: string; active_until: string; is_purchased: boolean }>;
-    billing: Array<{ date: string; description: string; amount: string; is_included: boolean }>;
+    billing: Array<{ id?: number; date: string; description: string; amount: string; is_included: boolean }>;
     history: Array<{ date: string; time: string; ip: string; login_name: string; device_os: string }>;
+    addons?: Array<{ key: string; label: string; description: string; price: number }>;
+    press_release_options?: Array<{ key: string; label: string; description: string; price: number }>;
+    extra?: { startedDate: string; storageUsedGB: number; storageTotalGB: number };
   } | null>(null);
 
   const [open, setOpen] = useState<Record<string, boolean>>({
@@ -998,8 +1199,34 @@ export default function SetupAccounting({ onRefresh }: { onRefresh?: () => void 
 
   const loadData = async () => {
     try {
-      const res = await api.getSetupAccounting();
-      setData(res.data);
+      const [setupRes, vaultRes, profileRes] = await Promise.all([
+        api.getSetupAccounting(),
+        api.getVaultFiles(),
+        api.profile()
+      ]);
+      
+      const storageTotalGB = vaultRes.data.storage_config.total_storage_gb || 5;
+      const totalSizeMB = vaultRes.data.files.reduce((sum: number, f: any) => sum + parseFloat(f.file_size_mb || "0"), 0);
+      const storageUsedGB = parseFloat((totalSizeMB / 1024).toFixed(3));
+      
+      let startedDate = "-";
+      if (profileRes.data.date_joined) {
+        try {
+          const dateObj = new Date(profileRes.data.date_joined);
+          if (!isNaN(dateObj.getTime())) {
+            startedDate = `${String(dateObj.getMonth() + 1).padStart(2, '0')}/${String(dateObj.getDate()).padStart(2, '0')}/${dateObj.getFullYear()}`;
+          }
+        } catch (e) {}
+      }
+
+      setData({
+        ...setupRes.data,
+        extra: {
+          startedDate,
+          storageUsedGB,
+          storageTotalGB
+        }
+      });
       if (onRefresh) {
         onRefresh();
       }
@@ -1020,7 +1247,7 @@ export default function SetupAccounting({ onRefresh }: { onRefresh?: () => void 
         two_fa_enabled: enabled,
         two_fa_email: emailVal,
       });
-      setData(res.data);
+      setData(p => p ? { ...res.data, extra: p.extra } : res.data);
       if (onRefresh) {
         onRefresh();
       }
@@ -1036,7 +1263,7 @@ export default function SetupAccounting({ onRefresh }: { onRefresh?: () => void 
       const res = await api.updateSetupAccounting({
         purchase_service: serviceName,
       });
-      setData(res.data);
+      setData(p => p ? { ...res.data, extra: p.extra } : res.data);
       if (onRefresh) {
         onRefresh();
       }
@@ -1050,7 +1277,7 @@ export default function SetupAccounting({ onRefresh }: { onRefresh?: () => void 
       const res = await api.updateSetupAccounting({
         renew_services: serviceNames,
       });
-      setData(res.data);
+      setData(p => p ? { ...res.data, extra: p.extra } : res.data);
       if (onRefresh) {
         onRefresh();
       }
@@ -1062,19 +1289,22 @@ export default function SetupAccounting({ onRefresh }: { onRefresh?: () => void 
   if (!data) {
     return (
       <div className="p-4 lg:px-16 py-6 text-black flex items-center justify-center container mx-auto max-w-6xl min-h-[300px]">
-        <p className="text-sm text-gray-500">Loading setup and accounting details...</p>
+        <span className="inline-block h-10 w-10 rounded-full border-4 border-gray-200 border-t-[#EF3832] animate-spin" />
       </div>
     );
   }
 
   const hasTwoFA = data.config.has_two_fa;
   const twoFAEnabled = data.config.two_fa_enabled;
+  const twoFAEmail = data.config.two_fa_email || "";
 
   const twoFABadge = !hasTwoFA
     ? <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-600 border border-red-300">NOT PURCHASED</span>
-    : twoFAEnabled
-      ? <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-green-100 text-green-700 border border-green-300">ENABLED</span>
-      : <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 border border-gray-300">DISABLED</span>;
+    : !twoFAEmail.trim()
+      ? <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 border border-orange-300">NOT CONFIGURED</span>
+      : twoFAEnabled
+        ? <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-green-100 text-green-700 border border-green-300">ENABLED</span>
+        : <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 border border-gray-300">DISABLED</span>;
 
   return (
     <div className="p-4 lg:px-16 py-6 text-black space-y-5 container mx-auto max-w-6xl">
@@ -1114,18 +1344,30 @@ export default function SetupAccounting({ onRefresh }: { onRefresh?: () => void 
       {/* ── ACCOUNTING ── */}
       <SectionWrapper>
         <SectionHeader title="Accounting" />
-        <AccordionRow label="Active Services" expanded={open.activeServices} onToggle={() => toggle("activeServices")} />
+        <AccordionRow label="Subscription" expanded={open.activeServices} onToggle={() => toggle("activeServices")} />
         {open.activeServices && (
           <AccordionContent>
             <ActiveServicesContent
               services={data.services}
-              onPurchase={handlePurchaseService}
+              billing={data.billing}
+              startedDate={data.extra?.startedDate || "-"}
+              storageUsedGB={data.extra?.storageUsedGB || 0}
+              storageTotalGB={data.extra?.storageTotalGB || 5}
               onRenew={handleRenewServices}
             />
           </AccordionContent>
         )}
-        <AccordionRow label="New Orders" expanded={open.newOrders} onToggle={() => toggle("newOrders")} />
-        {open.newOrders && <AccordionContent><NewOrdersContent onSuccess={loadData} /></AccordionContent>}
+        <AccordionRow label="Additional Services" expanded={open.newOrders} onToggle={() => toggle("newOrders")} />
+        {open.newOrders && (
+          <AccordionContent>
+            <NewOrdersContent
+              addonsList={data.addons || []}
+              pressOptionsList={data.press_release_options || []}
+              purchasedServices={data.services}
+              onSuccess={loadData}
+            />
+          </AccordionContent>
+        )}
         <AccordionRow label="Billing History" expanded={open.billingHistory} onToggle={() => toggle("billingHistory")} />
         {open.billingHistory && <AccordionContent><BillingHistoryContent billing={data.billing} /></AccordionContent>}
       </SectionWrapper>
@@ -1165,17 +1407,39 @@ function LoginSecurityContentWithCallback({
 }: LoginSecurityProps) {
   const [twoFAEmail, setTwoFAEmail] = useState(initialEmail);
   const [saved, setSaved] = useState(false);
+  const [localEnabled, setLocalEnabled] = useState(twoFAEnabled);
 
   useEffect(() => {
     setTwoFAEmail(initialEmail);
   }, [initialEmail]);
 
+  useEffect(() => {
+    setLocalEnabled(twoFAEnabled);
+  }, [twoFAEnabled]);
+
+  const statusLabel = !hasTwoFA
+    ? "Not Purchased"
+    : !twoFAEmail.trim()
+      ? "Not Configured"
+      : localEnabled
+        ? "Enabled"
+        : "Disabled";
+
+  const statusClass = !hasTwoFA
+    ? "bg-red-100 text-red-600 border-red-300"
+    : !twoFAEmail.trim()
+      ? "bg-orange-100 text-orange-700 border-orange-300"
+      : localEnabled
+        ? "bg-green-100 text-green-700 border-green-300"
+        : "bg-gray-100 text-gray-600 border-gray-300";
+
   if (!hasTwoFA) {
     return (
       <div className="text-sm space-y-4">
+        <span className={`inline-block text-xs font-bold px-2 py-0.5 rounded-full border ${statusClass}`}>{statusLabel}</span>
         <p className="text-gray-600 leading-relaxed">
           You have not purchased two-factor authentication (2FA).<br />
-          To do so please select <strong>New Orders</strong> and select Two-Factor Authentication (2FA).
+          To do so please select <strong>Additional Services</strong> and select Two-Factor Authentication (2FA).
         </p>
       </div>
     );
@@ -1183,7 +1447,7 @@ function LoginSecurityContentWithCallback({
 
   const handleSave = async () => {
     if (twoFAEmail.trim()) {
-      const ok = await onUpdate(twoFAEnabled, twoFAEmail);
+      const ok = await onUpdate(localEnabled, twoFAEmail);
       if (ok) {
         setSaved(true);
         setTimeout(() => setSaved(false), 3000);
@@ -1193,6 +1457,11 @@ function LoginSecurityContentWithCallback({
 
   return (
     <div className="text-sm space-y-4">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Status:</span>
+        <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${statusClass}`}>{statusLabel}</span>
+      </div>
+
       {saved && (
         <div className="bg-green-50 border border-green-300 text-green-700 text-xs px-4 py-2.5 rounded-lg flex items-center gap-2">
           <span>✓</span> 2FA email saved successfully.
@@ -1200,7 +1469,8 @@ function LoginSecurityContentWithCallback({
       )}
 
       <p className="text-gray-600 leading-relaxed">
-        You have purchased two factor authentication (2FA). This will provide you a code each time you login to the I Was Killed For This Information interface.
+        Two-factor authentication (2FA) protects both your <strong>login to this website</strong> and your <strong>check-in</strong>.
+        A verification code will be sent to your 2FA email address each time.
       </p>
 
       <div>
@@ -1222,18 +1492,24 @@ function LoginSecurityContentWithCallback({
           >
             SAVE
           </button>
-          <button
-            onClick={() => onUpdate(true, twoFAEmail)}
-            className={`text-xs font-bold px-5 py-2.5 rounded-lg transition-colors cursor-pointer ${twoFAEnabled ? "bg-green-500 text-white" : "border border-gray-300 text-gray-600 hover:bg-gray-50"}`}
-          >
-            ENABLE 2FA
-          </button>
-          <button
-            onClick={() => onUpdate(false, twoFAEmail)}
-            className={`text-xs font-bold px-5 py-2.5 rounded-lg transition-colors cursor-pointer ${!twoFAEnabled ? "bg-gray-500 text-white" : "border border-gray-300 text-gray-600 hover:bg-gray-50"}`}
-          >
-            DISABLE 2FA
-          </button>
+          
+          {twoFAEmail.trim() && (
+            localEnabled ? (
+              <button
+                onClick={async () => { const ok = await onUpdate(false, twoFAEmail); if (ok) setLocalEnabled(false); }}
+                className="bg-gray-500 hover:bg-gray-600 text-white text-xs font-bold px-5 py-2.5 rounded-lg transition-colors cursor-pointer"
+              >
+                DISABLE 2FA
+              </button>
+            ) : (
+              <button
+                onClick={async () => { const ok = await onUpdate(true, twoFAEmail); if (ok) setLocalEnabled(true); }}
+                className="bg-green-500 hover:bg-green-600 text-white text-xs font-bold px-5 py-2.5 rounded-lg transition-colors cursor-pointer"
+              >
+                ENABLE 2FA
+              </button>
+            )
+          )}
         </div>
       </div>
 
