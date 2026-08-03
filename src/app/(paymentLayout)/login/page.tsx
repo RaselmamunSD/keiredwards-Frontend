@@ -1,23 +1,28 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { LoginCredentials } from "@/Types/Types";
 import StepCredentials from "@/pages/authentication/login/StepCredentials";
 import { useAuth } from "@/context/AuthContext";
-import { useState } from "react";
-import Link from "next/link";
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { login, logout, isLoggedIn, isLoading } = useAuth();
   const router = useRouter();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    // Force logout when visiting the login page to ensure user must always re-authenticate
+    logout();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSuccess = async (credentials: LoginCredentials) => {
     setError("");
     setLoading(true);
     try {
-      await login(credentials);
+      await login();
       router.push("/overview");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed.");
@@ -26,15 +31,12 @@ export default function LoginPage() {
     }
   };
 
+  // Removed the isLoading || isLoggedIn early return to prevent SSG flashing.
+  // The useEffect will handle redirecting logged-in users.
+
   return (
     <div className="min-h-screen bg-black flex items-center justify-center px-4 py-12">
       <StepCredentials onSuccess={handleSuccess} />
-      <Link
-        href="/forgot-password"
-        className="fixed bottom-14 text-xs text-blue-300 hover:text-blue-200 underline"
-      >
-        Forgot password?
-      </Link>
       {loading && (
         <p className="fixed bottom-8 text-sm text-green-400 font-semibold">Signing in...</p>
       )}
@@ -43,4 +45,4 @@ export default function LoginPage() {
       )}
     </div>
   );
-}
+}

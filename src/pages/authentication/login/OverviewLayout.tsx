@@ -12,41 +12,47 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
-import { api } from "@/lib/api";
+import { api, tokenStorage } from "@/lib/api";
 
-// ── Mock data — replace with real API data in production ──────────────────────
-const MOCK_DATA = {
-  lastLogin: "03/10/2026 09:15 AM",
-  accountStatus: "Active",
-  checkIn: {
-    status: "Active",
-    nextCheckInDate: "03/30/2025 7:11 PM",
-    minutesRemaining: 999999,
-    frequency: "Weekly",
-    gracePeriod: "None",
-    email: "mycurrent@email.com",
-  },
-  subscription: {
-    plan: "Weekly Check-In",
-    started: "03/07/2025",
-    renews: "03/07/2027",
-    term: "2 Years",
-    storage: "5 GB Included",
-    storageUsedGB: 0.1,
-    storageTotalGB: 5,
-    distributionTo: "Press Release 250",
-  },
-  services: [
-    { name: "I Was Killed For This Information", details: "Daily Check-In", activeUntil: "March 7, 2027", status: "Active", active: true },
-    // UPDATED: Split into two rows per client feedback
-    { name: "Standard Storage", details: "5 GB Included", activeUntil: "March 7, 2027", status: "Active", active: true },
-    { name: "Additional Storage", details: "2 GB Added", activeUntil: "March 7, 2027", status: "Active", active: true },
-    { name: "Press Release", details: "250 Media Organizations", activeUntil: "March 7, 2027", status: "Active", active: true },
-    { name: "Private Email", details: "500 Messages / Year", activeUntil: "March 7, 2027", status: "Active", active: true },
-    // UPDATED: Two-Factor Authentication set to Active per client feedback
-    { name: "Two-Factor Authentication", details: "Login & Check-In Security", activeUntil: "March 7, 2027", status: "Active", active: true },
-  ],
-};
+// ── Minutes remaining until 11:59 PM Eastern on the given date ─────────────────
+function getMinutesRemainingUntilEndOfDayET(dateStr: string): number {
+  if (!dateStr) return 0;
+  const parsed = Date.parse(dateStr);
+  if (!isNaN(parsed)) {
+    const d = new Date(parsed);
+    const etFormatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    const parts = etFormatter.formatToParts(d);
+    const year = Number(parts.find((p) => p.type === "year")?.value);
+    const month = Number(parts.find((p) => p.type === "month")?.value);
+    const day = Number(parts.find((p) => p.type === "day")?.value);
+    const endOfDayET = new Date(`${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}T23:59:00-04:00`);
+    const diffMs = endOfDayET.getTime() - Date.now();
+    return diffMs > 0 ? Math.floor(diffMs / 60000) : 0;
+  }
+  const slashMatch = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (slashMatch) {
+    const [, mm, dd, yyyy] = slashMatch;
+    const endOfDayET = new Date(`${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}T23:59:00-04:00`);
+    const diffMs = endOfDayET.getTime() - Date.now();
+    return diffMs > 0 ? Math.floor(diffMs / 60000) : 0;
+  }
+  return 0;
+}
+
+function formatGracePeriodDisplay(gracePeriod: string): string {
+  if (!gracePeriod || gracePeriod.toUpperCase() === "NONE") return "Not Configured";
+  return gracePeriod;
+}
+
+function serviceStatusLabel(active: boolean, status: string): string {
+  if (status === "Not Purchased" || status === "Not Configured") return status;
+  return active ? "Active" : status;
+}
 
 // ── Help modal items ──────────────────────────────────────────────────────────
 const HELP_ITEMS = [
@@ -174,7 +180,6 @@ function CardRow({ label, value }: { label: string; value: React.ReactNode }) {
 export default function OverviewLayout() {
   const router = useRouter();
   const { isLoggedIn, isLoading: authLoading, logout } = useAuth();
-  const [helpOpen, setHelpOpen] = useState(false);
   const [data, setData] = useState<{
     lastLogin: string;
     accountStatus: string;
@@ -205,16 +210,21 @@ export default function OverviewLayout() {
     }>;
   } | null>(null);
 
+  const [error, setError] = useState<string>("");
+  const [reloadKey, setReloadKey] = useState<number>(0);
+
   useEffect(() => {
     if (!authLoading && !isLoggedIn) {
       router.push("/login");
     }
   }, [authLoading, isLoggedIn, router]);
 
+
   useEffect(() => {
     if (!isLoggedIn) return;
     const load = async () => {
       try {
+        setError("");
         const [accountingRes, scheduleRes, emailRes, vaultRes, profileRes] = await Promise.all([
           api.getSetupAccounting(),
           api.getCheckInSchedule(),
@@ -240,6 +250,10 @@ export default function OverviewLayout() {
           ? `Press Release (${pressSvc.additional_info || "250 count"})`
           : "Trusted Recipients";
 
+        const mainService = accountingRes.data.services.find((s: any) => s.name === "I Was Killed For This Information");
+        const subscriptionRenewsDate = mainService ? mainService.active_until : "March 7, 2027";
+        const standardStorageActiveUntil = subscriptionRenewsDate;
+
         const renewalDateStr = scheduleRes.data.renewal_date || "March 7, 2027";
         const parsedTime = Date.parse(renewalDateStr);
         let minutesRemaining = 999999;
@@ -247,9 +261,6 @@ export default function OverviewLayout() {
           const diffMs = parsedTime - Date.now();
           minutesRemaining = diffMs > 0 ? Math.floor(diffMs / 60000) : 0;
         }
-
-        const mainService = accountingRes.data.services.find((s: any) => s.name === "I Was Killed For This Information");
-        const standardStorageActiveUntil = mainService ? mainService.active_until : "March 7, 2027";
 
         const mappedServices: any[] = [
           {
@@ -318,7 +329,7 @@ export default function OverviewLayout() {
           subscription: {
             plan: `${scheduleRes.data.purchased_plan} Check-In`,
             started: startedDate,
-            renews: renewalDateStr,
+            renews: subscriptionRenewsDate,
             term: "1 Year",
             storage: `${storageTotalGB} GB`,
             storageUsedGB,
@@ -329,31 +340,51 @@ export default function OverviewLayout() {
         });
       } catch (err) {
         console.error("Failed to load overview data", err);
+        setError(err instanceof Error ? err.message : "Failed to load dashboard data. Please try again.");
       }
     };
     void load();
-  }, [isLoggedIn]);
+  }, [isLoggedIn, reloadKey]);
 
   const handleLogout = async () => {
     await logout();
     router.push("/");
   };
 
-  if (authLoading || !isLoggedIn) {
+  // Removed authLoading block from top to prevent SSG flashing and hooks errors.
+  if (authLoading) {
+    return <div className="min-h-screen bg-black" />;
+  }
+  if (!isLoggedIn) {
+    return null;
+  }
+
+  if (error) {
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center">
-        <p className="text-sm text-gray-500">Redirecting to login...</p>
+      <div className="min-h-screen bg-white flex flex-col items-center justify-center p-4">
+        <p className="text-sm text-red-500 font-semibold mb-4 text-center">{error}</p>
+        <button
+          onClick={() => {
+            setError("");
+            setData(null);
+            setReloadKey(prev => prev + 1);
+          }}
+          className="bg-[#EF3832] hover:bg-red-600 active:bg-red-700 text-white font-bold text-xs px-5 py-3 rounded-lg uppercase tracking-widest transition-colors duration-150 cursor-pointer"
+        >
+          Retry Loading
+        </button>
       </div>
     );
   }
 
   if (!data) {
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center">
-        <p className="text-sm text-gray-500">Loading dashboard overview...</p>
+      <div className="min-h-screen bg-white flex flex-col items-center justify-center">
+        <span className="inline-block h-10 w-10 rounded-full border-4 border-gray-200 border-t-[#EF3832] animate-spin" />
       </div>
     );
   }
+
 
   return (
     <div className="min-h-screen bg-white py-8 sm:py-10">
@@ -393,7 +424,7 @@ export default function OverviewLayout() {
             </button>
 
             <button
-              onClick={() => setHelpOpen(true)}
+              onClick={() => window.location.href = "http://iwaskilledforthisinformation.help"}
               className="bg-[#5DADE2] hover:bg-yellow-500 active:bg-yellow-600 text-white font-bold text-xs px-6 py-5 rounded-lg uppercase tracking-widest transition-colors duration-150 text-center cursor-pointer"
               style={{ minWidth: "80px" }}
             >
@@ -417,17 +448,17 @@ export default function OverviewLayout() {
 
           {/* Check-In Status */}
           <div className="border border-gray-200 rounded-xl overflow-hidden">
-            <div className={`px-5 py-3 border-b border-gray-200 ${data.checkIn.status === "Active" ? "bg-green-50" : "bg-yellow-50"}`}>
-              <h2 className={`text-xs font-bold uppercase tracking-widest ${data.checkIn.status === "Active" ? "text-green-700" : "text-yellow-700"}`}>
+            <div className={`px-5 py-3 border-b border-gray-200 ${data.checkIn.status === "Active" ? "bg-green-50" : "bg-red-50"}`}>
+              <h2 className={`text-xs font-bold uppercase tracking-widest ${data.checkIn.status === "Active" ? "text-green-700" : "text-red-700"}`}>
                 Check-In Status
               </h2>
             </div>
             <div>
               <CardRow label="Status" value={<span className="font-bold text-gray-900">● {data.checkIn.status}</span>} />
               <CardRow label="Next Check-In Date" value={<span className="font-bold text-gray-900">{data.checkIn.nextCheckInDate}</span>} />
-              <CardRow label="Minutes Remaining" value={<span className="font-bold text-gray-900">{data.checkIn.minutesRemaining.toLocaleString()}</span>} />
+              <CardRow label="Minutes Remaining" value={<span className="font-bold text-gray-900">{getMinutesRemainingUntilEndOfDayET(data.checkIn.nextCheckInDate).toLocaleString()}</span>} />
               <CardRow label="Frequency" value={<span className="font-bold text-gray-900">{data.checkIn.frequency}</span>} />
-              <CardRow label="Grace Period" value={<span className="font-bold text-gray-900">{data.checkIn.gracePeriod}</span>} />
+              <CardRow label="Grace Period" value={<span className="font-bold text-gray-900">{formatGracePeriodDisplay(data.checkIn.gracePeriod)}</span>} />
               <CardRow
                 label="Check-In Email"
                 value={
@@ -451,12 +482,53 @@ export default function OverviewLayout() {
               <CardRow label="Started" value={<span className="font-bold text-gray-900">{data.subscription.started}</span>} />
               <CardRow label="Renews" value={<span className="font-bold text-gray-900">{data.subscription.renews}</span>} />
               <CardRow label="Term" value={<span className="font-bold text-gray-900">{data.subscription.term}</span>} />
-              <CardRow label="Storage" value={<span className="font-bold text-gray-900">{data.subscription.storage}</span>} />
+              <CardRow
+                label="Storage"
+                value={
+                  <div className="text-right">
+                    <div className="font-bold text-gray-900">Standard 5 GB</div>
+                    {data.services.find((s) => s.name === "Additional Storage" && s.active) && (
+                      <div className="font-bold text-gray-900">
+                        Additional {data.services.find((s) => s.name === "Additional Storage")?.details || "0 GB"}
+                      </div>
+                    )}
+                  </div>
+                }
+              />
               <CardRow
                 label="Storage Used"
                 value={<StorageBar used={data.subscription.storageUsedGB} total={data.subscription.storageTotalGB} />}
               />
-              <CardRow label="Distribution To" value={<span className="font-bold text-gray-900">{data.subscription.distributionTo}</span>} />
+              <CardRow
+                label="Distribution"
+                value={<span className="font-bold text-gray-900">{data.subscription.distributionTo}</span>}
+              />
+              <CardRow
+                label="Private Email"
+                value={
+                  (() => {
+                    const svc = data.services.find((s) => s.name === "Private Email");
+                    const purchased = svc?.active ?? false;
+                    return (
+                      <span className={`font-bold ${purchased ? "text-gray-900" : "text-red-600"}`}>
+                        {purchased ? "Active" : "Not Purchased"}
+                      </span>
+                    );
+                  })()
+                }
+              />
+              <CardRow
+                label="Two-Factor Authentication (2FA)"
+                value={
+                  (() => {
+                    const svc = data.services.find((s) => s.name === "Two-Factor Authentication");
+                    if (!svc?.active) {
+                      return <span className="font-bold text-orange-600">Not Configured</span>;
+                    }
+                    return <span className="font-bold text-gray-900">Active</span>;
+                  })()
+                }
+              />
             </div>
           </div>
         </div>
@@ -486,8 +558,8 @@ export default function OverviewLayout() {
                   <td className="px-5 py-3.5 text-gray-600">{svc.details}</td>
                   <td className="px-5 py-3.5 text-gray-600 font-mono text-xs">{svc.activeUntil}</td>
                   <td className="px-5 py-3.5">
-                    <span className={`text-sm font-normal ${svc.active ? "text-gray-700" : "text-gray-500"}`}>
-                      {svc.status}
+                    <span className={`text-sm font-normal ${svc.active ? "text-gray-700" : svc.status === "Not Configured" ? "text-orange-600" : "text-gray-500"}`}>
+                      {serviceStatusLabel(svc.active, svc.status)}
                     </span>
                   </td>
                 </tr>
@@ -516,9 +588,6 @@ export default function OverviewLayout() {
         </div>
 
       </div>
-
-      {/* ── Help Modal ── */}
-      {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
     </div>
   );
 }

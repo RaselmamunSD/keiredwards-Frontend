@@ -361,12 +361,10 @@ export default function Step4Storage({
     };
 
     if (addons.privateEmail) checkoutMetadata.purchase_services.push("Private Email");
-    if (addons.twoFactor) checkoutMetadata.purchase_services.push("Two-Factor Authentication");
 
     if (step3.pressRelease1000) checkoutMetadata.press_option = "press_release_1000";
     else if (step3.pressRelease500) checkoutMetadata.press_option = "press_release_500";
     else if (step3.pressRelease250) checkoutMetadata.press_option = "press_release_250";
-    else if (step3.pressRelease) checkoutMetadata.press_option = "press_release";
 
     localStorage.setItem("checkout_metadata", JSON.stringify(checkoutMetadata));
 

@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { LOGIN_DOMAIN, getCrossDomainUrl } from "@/lib/navigation";
+
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -138,6 +140,17 @@ export default function PaymentPage({
   const initiatePayment = async (method: "paypal" | "card") => {
     setApiError("");
     setStep("processing");
+
+    let customMetadata: Record<string, unknown> = {};
+    const savedMeta = localStorage.getItem("checkout_metadata");
+    if (savedMeta) {
+      try {
+        customMetadata = JSON.parse(savedMeta);
+      } catch (e) {
+        console.error("Failed to parse custom metadata:", e);
+      }
+    }
+
     try {
       const response = await api.paymentsCreate({
         amount,
@@ -146,10 +159,14 @@ export default function PaymentPage({
           merchantName,
           method,
           orderItems,
+          ...customMetadata,
         },
       });
       const checkoutUrl = response.data.checkout_url;
       if (checkoutUrl) {
+        localStorage.removeItem("checkout_amount");
+        localStorage.removeItem("checkout_order_items");
+        localStorage.removeItem("checkout_metadata");
         window.location.href = checkoutUrl;
         return;
       }
@@ -195,7 +212,11 @@ export default function PaymentPage({
       amount={amount}
       onDone={() => {
         onSuccess?.();
-        router.push("/login");
+        if (typeof window !== "undefined") {
+          window.location.href = getCrossDomainUrl(LOGIN_DOMAIN, "/login");
+        } else {
+          router.push("/login");
+        }
       }}
     />
   );

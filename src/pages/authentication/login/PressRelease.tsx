@@ -24,9 +24,9 @@ Reference ID: [Auto-generated]`;
 
 // NOTE FOR ADMIN: These tiers should be configurable via admin panel (count + price)
 const REACH_TIERS = [
-  { count: "250", label: "Media Outlets", badge: "STANDARD (CURRENT)", isCurrent: true, price: null },
-  { count: "500", label: "Media Outlets", badge: null, isCurrent: false, price: "$495" },
-  { count: "1,000+", label: "Media Outlets", badge: null, isCurrent: false, price: "$695" },
+  { count: "250", label: "Media Outlets", price: null },
+  { count: "500", label: "Media Outlets", price: "$495" },
+  { count: "1,000+", label: "Media Outlets", price: "$695" },
 ];
 
 // ── Alert Modal ───────────────────────────────────────────────────────────────
@@ -52,24 +52,49 @@ function AlertModal({ message, onClose }: { message: string; onClose: () => void
 }
 
 export default function PressRelease() {
-  const [isActive, setIsActive] = useState(true);
+  const [isActive, setIsActive] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [template, setTemplate] = useState(DEFAULT_PRESS_TEMPLATE);
   const [draft, setDraft] = useState(template);
   const [saved, setSaved] = useState(false);
   const [currentTier, setCurrentTier] = useState(0);
+  const [category, setCategory] = useState("");
+  const [tiers, setTiers] = useState<Array<{ count: string; label: string; price: string | null }>>(REACH_TIERS);
+  const [pressCategories, setPressCategories] = useState<string[]>([]);
 
   // ── Alert Modal State ──
+  const [subject, setSubject] = useState("URGENT: Critical Information Released");
   const [alertMessage, setAlertMessage] = useState("");
+  const [isPurchased, setIsPurchased] = useState(false);
+
+  const safeCurrentTier = currentTier >= 0 && currentTier < tiers.length ? currentTier : 0;
 
   useEffect(() => {
     const load = async () => {
+      try {
+        const res = await api.get("/dashboard/public/press-categories/");
+        if (res.data?.categories) {
+          setPressCategories(res.data.categories);
+        }
+      } catch (err) {
+        console.error("Failed to load press categories", err);
+      }
       try {
         const res = await api.getPressRelease();
         setIsActive(res.data.is_active);
         setTemplate(res.data.template);
         setDraft(res.data.template);
         setCurrentTier(res.data.current_tier);
+        setIsPurchased(res.data.is_purchased ?? false);
+        if (res.data.category) {
+          setCategory(res.data.category);
+        }
+        if (res.data.subject) {
+          setSubject(res.data.subject);
+        }
+        if (res.data.tiers && res.data.tiers.length > 0) {
+          setTiers(res.data.tiers);
+        }
       } catch (err) {
         console.error("Failed to load press release template", err);
       }
@@ -85,8 +110,14 @@ export default function PressRelease() {
 
   const handleSave = async () => {
     try {
-      const res = await api.savePressRelease({ template: draft });
+      const res = await api.savePressRelease({
+        template: draft,
+        subject: subject,
+        category: category
+      });
       setTemplate(res.data.template);
+      if (res.data.subject) setSubject(res.data.subject);
+      if (res.data.category) setCategory(res.data.category);
       setIsEditing(false);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
@@ -110,14 +141,38 @@ export default function PressRelease() {
     setIsEditing(false);
   };
 
-  // FIX: Upgrade button — should NOT change tier for free, redirect to payment
-  const handleUpgradeClick = () => {
-    setAlertMessage("To upgrade your plan, please contact support or visit the billing section.");
+  const handleUpgradeTier = async (tierIndex: number, priceStr: string | null) => {
+    if (priceStr === null) return;
+    try {
+      const priceNum = parseFloat(priceStr.replace("$", ""));
+      if (isNaN(priceNum)) {
+        throw new Error("Invalid price for the selected tier.");
+      }
+      localStorage.setItem("checkout_amount", priceNum.toString());
+      localStorage.setItem(
+        "checkout_order_items",
+        JSON.stringify([
+          { label: `${tiers[tierIndex].count} Media Outlets Upgrade`, price: priceNum }
+        ])
+      );
+      localStorage.setItem(
+        "checkout_metadata",
+        JSON.stringify({
+          type: "press_release_upgrade",
+          tier: tierIndex
+        })
+      );
+      window.location.href = "/payment";
+    } catch (err) {
+      setAlertMessage(err instanceof Error ? err.message : "Failed to initiate payment.");
+    }
   };
 
-  // FIX: Order button — was not working
-  const handleOrderClick = () => {
-    setAlertMessage("To place an order, please contact support or visit the billing section.");
+  const handleUpgradeNext = () => {
+    const nextTierIndex = safeCurrentTier + 1;
+    if (nextTierIndex < tiers.length && tiers[nextTierIndex].price) {
+      void handleUpgradeTier(nextTierIndex, tiers[nextTierIndex].price);
+    }
   };
 
   return (
@@ -152,13 +207,15 @@ export default function PressRelease() {
               </span>
             </p>
             <p className="text-green-600 text-sm mt-0.5">
-              Configured for {REACH_TIERS[currentTier].count} media organizations
+              Configured for {tiers[safeCurrentTier]?.count ?? "250"} media organizations
             </p>
           </div>
         </div>
         <button
           onClick={handleActiveToggle}
-          className={`text-white text-xs font-bold px-5 py-2.5 rounded-lg transition-colors ${isActive ? "bg-red-500 hover:bg-red-400" : "bg-green-500 hover:bg-green-400"}`}
+          className={`text-white text-xs font-bold px-5 py-2.5 rounded-lg transition-colors ${
+            isActive ? "bg-red-500 hover:bg-red-400" : "bg-green-500 hover:bg-green-400"
+          }`}
         >
           {isActive ? "DISABLE PRESS RELEASE" : "ENABLE PRESS RELEASE"}
         </button>
@@ -172,11 +229,11 @@ export default function PressRelease() {
         </div>
         <p className="text-sm text-gray-700 mb-3">
           Upon a failure to Check-In, you have selected a press release of{" "}
-          <span className="text-blue-600 font-bold">{REACH_TIERS[currentTier].count} Media Organizations.</span>
+          <span className="text-blue-600 font-bold">{tiers[safeCurrentTier]?.count ?? "250"} Media Organizations.</span>
         </p>
         <div className="border border-gray-200 bg-white p-3 inline-block rounded-xl">
           <p className="text-xs text-gray-500 mb-0.5">The category selected is:</p>
-          <p className="text-blue-600 font-bold text-sm">Government corruption</p>
+          <p className="text-blue-600 font-bold text-sm">{category}</p>
         </div>
       </div>
 
@@ -212,6 +269,45 @@ export default function PressRelease() {
               </>
             )}
           </div>
+        </div>
+
+        {/* Subject line */}
+        <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/50">
+          <label className="text-xs font-bold text-gray-500 uppercase tracking-widest block mb-2">Subject Bar</label>
+          <input
+            type="text"
+            placeholder="Enter press release email subject..."
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            readOnly={!isEditing}
+            className={`w-full text-sm px-4 py-3 rounded-lg border focus:outline-none transition-all ${
+              isEditing ? "border-blue-400 bg-white focus:ring-2 focus:ring-blue-200" : "border-gray-200 bg-gray-100 text-gray-700 cursor-not-allowed"
+            }`}
+          />
+        </div>
+
+        {/* Category selector */}
+        <div className="px-5 py-3 border-b border-gray-100 bg-white">
+          <label className="text-xs font-bold text-gray-500 uppercase tracking-widest block mb-1.5">Category of Information</label>
+          {isEditing ? (
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="w-full text-sm px-3 py-2 rounded-lg border border-gray-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-300 cursor-pointer"
+            >
+              <option value="">Select a category...</option>
+              {pressCategories.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              value={category || "Not Selected"}
+              readOnly
+              className="w-full text-sm px-3 py-2 rounded-lg border border-transparent bg-gray-50 text-gray-800 cursor-default"
+            />
+          )}
         </div>
 
         <textarea
@@ -253,15 +349,15 @@ export default function PressRelease() {
           <div className="flex gap-2">
             {/* FIX: UPGRADE button now shows modal instead of doing nothing */}
             <button
-              onClick={handleUpgradeClick}
-              className="bg-green-500 hover:bg-green-400 text-white text-xs font-bold px-5 py-2 rounded-lg transition-colors"
+              onClick={handleUpgradeNext}
+              className="bg-green-500 hover:bg-green-400 text-white text-xs font-bold px-5 py-2 rounded-lg transition-colors cursor-pointer"
             >
               UPGRADE
             </button>
             {/* FIX: ORDER button now shows modal instead of doing nothing */}
             <button
-              onClick={handleOrderClick}
-              className="border border-gray-300 hover:bg-gray-50 text-gray-700 text-xs font-bold px-5 py-2 rounded-lg transition-colors"
+              onClick={handleUpgradeNext}
+              className="border border-gray-300 hover:bg-gray-50 text-gray-700 text-xs font-bold px-5 py-2 rounded-lg transition-colors cursor-pointer"
             >
               ORDER
             </button>
@@ -269,33 +365,36 @@ export default function PressRelease() {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          {REACH_TIERS.map((tier, index) => (
+          {tiers.map((tier, index) => (
             <div
               key={index}
-              className={`border rounded-xl p-5 flex flex-col gap-3 transition-colors ${currentTier === index
+              className={`border rounded-xl p-5 flex flex-col gap-3 transition-colors ${safeCurrentTier === index
                   ? "border-green-400 bg-green-50"
                   : "border-gray-200 bg-white"
                 }`}
             >
               <div>
-                <p className={`text-2xl font-black ${currentTier === index ? "text-green-600" : "text-gray-800"}`}>
+                <p className={`text-2xl font-black ${safeCurrentTier === index ? "text-green-600" : "text-gray-800"}`}>
                   {tier.count}
                 </p>
                 <p className="text-xs text-gray-500 mt-0.5">{tier.label}</p>
               </div>
 
-              {currentTier === index ? (
+              {safeCurrentTier === index ? (
                 <span className="inline-block border border-green-500 text-green-600 text-xs font-bold px-3 py-1 rounded-lg w-fit">
-                  STANDARD (CURRENT)
+                  {index === 0 ? "STANDARD (CURRENT)" : "CURRENT TIER"}
                 </span>
-              ) : (
-                // FIX: No longer calls setCurrentTier — user cannot upgrade for free
+              ) : index > safeCurrentTier ? (
                 <button
-                  onClick={handleUpgradeClick}
+                  onClick={() => handleUpgradeTier(index, tier.price)}
                   className="bg-green-500 hover:bg-green-400 text-white text-xs font-bold px-4 py-2 rounded-lg w-fit transition-colors cursor-pointer"
                 >
                   UPGRADE — {tier.price}
                 </button>
+              ) : (
+                <span className="inline-block border border-gray-300 text-gray-500 text-xs font-bold px-3 py-1 rounded-lg w-fit">
+                  INCLUDED
+                </span>
               )}
             </div>
           ))}

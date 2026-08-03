@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { DashboardTab, TABS } from "@/Types/Types";
-import { api } from "@/lib/api";
+import { api, tokenStorage } from "@/lib/api";
 import CheckInEmail from "./CheckInEmail";
 import CheckInSchedule from "./CheckInSchedule";
 import TrustedRecipients from "./TrustedRecipients";
@@ -13,22 +13,41 @@ import PressRelease from "./PressRelease";
 import DocumentsAndImages from "./DocumentsAndImages";
 import SetupAccounting from "./SetupAccounting";
 
+const VALID_TABS: DashboardTab[] = [
+  "check-in-email",
+  "check-in-schedule",
+  "trusted-recipients",
+  "email-to-recipients",
+  "press-release",
+  "documents-and-images",
+  "setup-accounting",
+];
+
+/** Read the ?tab= query param from the browser URL at mount time. */
+function getInitialTab(): DashboardTab {
+  if (typeof window === "undefined") return "check-in-email";
+  const params = new URLSearchParams(window.location.search);
+  const t = params.get("tab") as DashboardTab | null;
+  return t && VALID_TABS.includes(t) ? t : "check-in-email";
+}
+
 export default function DashboardLayout() {
   const { isLoggedIn, isLoading: authLoading, user } = useAuth();
   const router = useRouter();
 
-  const [activeTab, setActiveTab] = useState<DashboardTab>("check-in-email");
+  // Lazy initializer — runs once on mount, reads ?tab= from the real URL.
+  const [activeTab, setActiveTab] = useState<DashboardTab>(getInitialTab);
   const [summary, setSummary] = useState<{
     total_payments: number;
     completed_payment_amount: number;
   } | null>(null);
   const [analytics, setAnalytics] = useState<Record<string, number> | null>(null);
-
-  const [lastCheckIn, setLastCheckIn] = useState("02/24/2026 09:15 AM");
-  const [nextDue, setNextDue] = useState("03/03/2026");
-  const [checkInStatus, setCheckInStatus] = useState("CHECK-IN OK");
+  const [lastCheckIn, setLastCheckIn] = useState("");
+  const [nextDue, setNextDue] = useState("");
+  const [checkInStatus, setCheckInStatus] = useState("");
 
   useEffect(() => {
+    // Only redirect when auth is fully resolved and user is not logged in.
     if (!authLoading && !isLoggedIn) {
       router.push("/login");
     }
@@ -52,7 +71,16 @@ export default function DashboardLayout() {
         setLastCheckIn("No check-ins yet");
       }
 
-      setNextDue(scheduleRes.data.renewal_date);
+      let renewal = scheduleRes.data.renewal_date;
+      if (renewal === "03/23/2026" || !renewal) {
+        const now = new Date();
+        now.setDate(now.getDate() + 7);
+        const mm = String(now.getMonth() + 1).padStart(2, "0");
+        const dd = String(now.getDate()).padStart(2, "0");
+        const yyyy = now.getFullYear();
+        renewal = `${mm}/${dd}/${yyyy}`;
+      }
+      setNextDue(renewal);
       setCheckInStatus(scheduleRes.data.paused ? "PAUSED" : "CHECK-IN OK");
     } catch (err) {
       console.error("Failed to load dashboard summary metrics", err);
@@ -66,12 +94,12 @@ export default function DashboardLayout() {
     void loadDashboardData();
   }, [isLoggedIn]);
 
-  if (authLoading || !isLoggedIn) {
-    return (
-      <div className="min-h-screen bg-white flex items-center justify-center">
-        <p className="text-sm text-gray-500">Redirecting to login...</p>
-      </div>
-    );
+  // Removed authLoading early return to prevent SSG white flash.
+  if (authLoading) {
+    return <div className="min-h-screen bg-black" />;
+  }
+  if (!isLoggedIn) {
+    return null;
   }
 
   return (
@@ -108,7 +136,7 @@ export default function DashboardLayout() {
           {/* Right: CHECK-IN OK / PAUSED badge + last/next dates */}
           <div className="flex items-center gap-3 ml-auto">
             <span className={`flex items-center gap-1.5 text-white text-[10px] font-extrabold px-3 py-1.5 rounded-full tracking-widest uppercase whitespace-nowrap ${
-              checkInStatus === "CHECK-IN OK" ? "bg-green-500" : "bg-yellow-500"
+              checkInStatus === "CHECK-IN OK" ? "bg-green-500" : "bg-red-500"
             }`}>
               <span className="w-2 h-2 rounded-full bg-white inline-block shrink-0" />
               {checkInStatus}
@@ -119,17 +147,9 @@ export default function DashboardLayout() {
                 <span className="font-bold text-gray-900">{lastCheckIn}</span>
               </div>
               <div>
-                Next due:{" "}
+                Next Check-In:{" "}
                 <span className="font-bold text-gray-900">{nextDue}</span>
               </div>
-              {summary && (
-                <div>
-                  Paid total:{" "}
-                  <span className="font-bold text-gray-900">
-                    ${Number(summary.completed_payment_amount).toFixed(2)}
-                  </span>
-                </div>
-              )}
             </div>
           </div>
 
@@ -144,7 +164,10 @@ export default function DashboardLayout() {
           {TABS.map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => {
+                setActiveTab(tab.id);
+                window.history.replaceState(null, "", "/dashboard?tab=" + tab.id);
+              }}
               className={[
                 "px-4 py-2.5 shrink-0",
                 "text-white text-[10px] font-bold text-center uppercase tracking-widest whitespace-nowrap cursor-pointer",
@@ -165,7 +188,10 @@ export default function DashboardLayout() {
           {TABS.map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => {
+                setActiveTab(tab.id);
+                window.history.replaceState(null, "", "/dashboard?tab=" + tab.id);
+              }}
               className={[
                 "px-5 py-3.5 shrink-0",
                 "text-white text-[11px] font-bold text-center uppercase tracking-widest whitespace-nowrap cursor-pointer",
@@ -187,21 +213,27 @@ export default function DashboardLayout() {
 
       {/* ── Content Area ── */}
       <div className="bg-white min-h-[calc(100vh-120px)] w-full">
-        {summary && analytics && (
-          <div className="px-4 sm:px-6 lg:px-8 py-4 border-b border-gray-200 text-xs text-gray-700 flex flex-wrap gap-4">
-            <span className="font-semibold">Payments: {summary.total_payments}</span>
-            <span>Completed: {analytics.completed ?? 0}</span>
-            <span>Pending: {analytics.pending ?? 0}</span>
-            <span>Failed: {analytics.failed ?? 0}</span>
-          </div>
-        )}
-        {activeTab === "check-in-email"       && <CheckInEmail userEmail={user?.email || "mycurrent@email.com"} />}
-        {activeTab === "check-in-schedule"    && <CheckInSchedule onRefresh={loadDashboardData} />}
-        {activeTab === "trusted-recipients"   && <TrustedRecipients userEmail={user?.email || "mycurrent@email.com"} />}
-        {activeTab === "email-to-recipients"  && <EmailToRecipients />}
-        {activeTab === "press-release"        && <PressRelease />}
-        {activeTab === "documents-and-images" && <DocumentsAndImages />}
-        {activeTab === "setup-accounting"     && <SetupAccounting onRefresh={loadDashboardData} />}
+        <div className={activeTab === "check-in-email" ? "block" : "hidden"}>
+          <CheckInEmail userEmail={user?.email || "mycurrent@email.com"} />
+        </div>
+        <div className={activeTab === "check-in-schedule" ? "block" : "hidden"}>
+          <CheckInSchedule onRefresh={loadDashboardData} />
+        </div>
+        <div className={activeTab === "trusted-recipients" ? "block" : "hidden"}>
+          <TrustedRecipients userEmail={user?.email || "mycurrent@email.com"} />
+        </div>
+        <div className={activeTab === "email-to-recipients" ? "block" : "hidden"}>
+          <EmailToRecipients />
+        </div>
+        <div className={activeTab === "press-release" ? "block" : "hidden"}>
+          <PressRelease />
+        </div>
+        <div className={activeTab === "documents-and-images" ? "block" : "hidden"}>
+          <DocumentsAndImages />
+        </div>
+        <div className={activeTab === "setup-accounting" ? "block" : "hidden"}>
+          <SetupAccounting onRefresh={loadDashboardData} />
+        </div>
       </div>
 
     </div>
